@@ -1,7 +1,7 @@
 {
   "name": "pi-openai-codex-fast",
   "version": "0.0.1-alpha.0",
-  "description": "Pi package that adds an openai-codex-fast provider backed by OpenAI Codex priority service tier",
+  "description": "Pi package that adds an openai-codex-fast provider backed by openai-codex with priority service tier",
   "keywords": [
     "pi-package"
   ],
@@ -28,6 +28,7 @@
     "fmt": "oxfmt",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
+    "benchmark": "node ./benchmarks/run.ts",
     "release:publish": "npm run check && node ./scripts/publish.ts"
   },
   "devDependencies": {

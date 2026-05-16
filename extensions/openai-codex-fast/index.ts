@@ -23,32 +23,37 @@ const OPENAI_CODEX_PROVIDER = "openai-codex";
 const PLACEHOLDER_API_KEY = "__openai_codex_fast_reuses_openai_codex_auth__";
 const OPENAI_CODEX_FAST_MODEL_IDS = new Set(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
 
-const authStorage = AuthStorage.create();
-const builtInCodexModels = getModels(OPENAI_CODEX_PROVIDER);
-const builtInCodexModelsById = new Map(builtInCodexModels.map((model) => [model.id, model]));
-const fastCodexModels = builtInCodexModels.filter((model) =>
+const OPENAI_CODEX_MODELS = getModels(OPENAI_CODEX_PROVIDER);
+const OPENAI_CODEX_FAST_MODELS = OPENAI_CODEX_MODELS.filter((model) =>
   OPENAI_CODEX_FAST_MODEL_IDS.has(model.id),
+).map(
+  (model): ProviderModelConfig => ({
+    id: model.id,
+    name: model.name,
+    baseUrl: model.baseUrl,
+    reasoning: model.reasoning,
+    ...(model.thinkingLevelMap !== undefined ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
+    input: model.input,
+    cost: model.cost,
+    contextWindow: model.contextWindow,
+    maxTokens: model.maxTokens,
+    ...(model.headers !== undefined ? { headers: model.headers } : {}),
+    ...(model.compat !== undefined ? { compat: model.compat } : {}),
+  }),
 );
 
-if (fastCodexModels.length === 0) {
-  throw new Error(
-    `No ${OPENAI_CODEX_PROVIDER} models matched the configured fast-model allowlist.`,
-  );
-}
+const authStorage = AuthStorage.create();
 
-const fastProviderModels = fastCodexModels.map((model) => ({
-  id: model.id,
-  name: model.name,
-  baseUrl: model.baseUrl,
-  reasoning: model.reasoning,
-  thinkingLevelMap: model.thinkingLevelMap,
-  input: model.input,
-  cost: model.cost,
-  contextWindow: model.contextWindow,
-  maxTokens: model.maxTokens,
-  headers: model.headers,
-  compat: model.compat,
-})) as ProviderModelConfig[];
+async function requireOpenAICodexAuth(): Promise<string> {
+  authStorage.reload();
+  const apiKey = await authStorage.getApiKey(OPENAI_CODEX_PROVIDER, { includeFallback: false });
+  if (!apiKey) {
+    throw new Error(
+      `No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
+    );
+  }
+  return apiKey;
+}
 
 function streamSimpleOpenAICodexFast(
   model: Model<Api>,
@@ -59,26 +64,18 @@ function streamSimpleOpenAICodexFast(
 
   void (async () => {
     try {
-      const canonicalModel = builtInCodexModelsById.get(model.id) as
-        | Model<typeof OPENAI_CODEX_API>
-        | undefined;
-      if (!canonicalModel) {
+      const codexModel = OPENAI_CODEX_MODELS.find((m) => m.id === model.id);
+      if (!codexModel) {
         throw new Error(`Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`);
       }
 
-      authStorage.reload();
-      const apiKey = await authStorage.getApiKey(OPENAI_CODEX_PROVIDER, { includeFallback: false });
-      if (!apiKey) {
-        throw new Error(
-          `No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
-        );
-      }
+      const apiKey = await requireOpenAICodexAuth();
 
       const clampedReasoning = options?.reasoning
-        ? clampThinkingLevel(canonicalModel, options.reasoning)
+        ? clampThinkingLevel(codexModel, options.reasoning)
         : undefined;
       const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-      const inner = streamOpenAICodexResponses(canonicalModel, context, {
+      const inner = streamOpenAICodexResponses(codexModel, context, {
         ...options,
         apiKey,
         serviceTier: "priority",
@@ -120,13 +117,28 @@ function streamSimpleOpenAICodexFast(
   return outer;
 }
 
-export default function (pi: ExtensionAPI) {
+export default async function (pi: ExtensionAPI) {
+  await requireOpenAICodexAuth();
+
+  if (OPENAI_CODEX_FAST_MODELS.length === 0) {
+    throw new Error(
+      `[${OPENAI_CODEX_FAST_PROVIDER}]: No models available. The provider will not be registered.`,
+    );
+  }
+
+  const baseUrl = OPENAI_CODEX_FAST_MODELS.find((model) => model.baseUrl)?.baseUrl;
+  if (!baseUrl) {
+    throw new Error(
+      `[${OPENAI_CODEX_FAST_PROVIDER}]: No base URL found for any model. The provider will not be registered.`,
+    );
+  }
+
   pi.registerProvider(OPENAI_CODEX_FAST_PROVIDER, {
     name: "OpenAI Codex Fast",
-    baseUrl: fastCodexModels[0]!.baseUrl,
+    baseUrl,
     apiKey: PLACEHOLDER_API_KEY,
     api: OPENAI_CODEX_FAST_API,
-    models: fastProviderModels,
+    models: OPENAI_CODEX_FAST_MODELS,
     streamSimple: streamSimpleOpenAICodexFast,
   });
 

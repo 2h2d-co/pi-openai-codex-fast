@@ -232,6 +232,23 @@ function pointBuiltInCodexAt(baseUrl: string, t: TestContext): void {
   });
 }
 
+async function reloadResourceLoaderWithAgentDir(
+  resourceLoader: DefaultResourceLoader,
+  agentDir: string,
+): Promise<void> {
+  const previousAgentDir = process.env[AGENT_DIR_ENV];
+  process.env[AGENT_DIR_ENV] = agentDir;
+  try {
+    await resourceLoader.reload();
+  } finally {
+    if (previousAgentDir === undefined) {
+      delete process.env[AGENT_DIR_ENV];
+    } else {
+      process.env[AGENT_DIR_ENV] = previousAgentDir;
+    }
+  }
+}
+
 async function createIntegrationSession(
   t: TestContext,
   options: IntegrationSessionOptions = {},
@@ -266,17 +283,7 @@ async function createIntegrationSession(
     noContextFiles: true,
   });
 
-  const previousAgentDir = process.env[AGENT_DIR_ENV];
-  process.env[AGENT_DIR_ENV] = agentDir;
-  try {
-    await resourceLoader.reload();
-  } finally {
-    if (previousAgentDir === undefined) {
-      delete process.env[AGENT_DIR_ENV];
-    } else {
-      process.env[AGENT_DIR_ENV] = previousAgentDir;
-    }
-  }
+  await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
 
   const initialModel = modelRegistry.find(CODEX_PROVIDER, MODEL_ID);
   assert.ok(initialModel, `Expected built-in ${CODEX_PROVIDER}/${MODEL_ID} to exist`);
@@ -329,6 +336,35 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
     assert.equal(message.api, CODEX_API);
   }
 }
+
+void test("fails extension load when built-in Codex auth is missing", async (t) => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-auth-"));
+  const cwd = join(tempRoot, "cwd");
+  const agentDir = join(tempRoot, "agent");
+  await mkdir(cwd, { recursive: true });
+  await mkdir(agentDir, { recursive: true });
+  await clearCodexAuth(agentDir);
+  t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager: SettingsManager.inMemory({}),
+    additionalExtensionPaths: [extensionPath],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  });
+
+  await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
+
+  const extensionsResult = resourceLoader.getExtensions();
+  assert.equal(extensionsResult.extensions.length, 0);
+  assert.equal(extensionsResult.runtime.pendingProviderRegistrations.length, 0);
+  assert.equal(extensionsResult.errors.length, 1);
+  assert.match(extensionsResult.errors[0]?.error ?? "", /No openai-codex auth found/);
+});
 
 void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
   const { session } = await createIntegrationSession(t);
