@@ -60,7 +60,7 @@ function streamSimpleOpenAICodexFast(
   void (async () => {
     try {
       const canonicalModel = builtInCodexModelsById.get(model.id) as
-        | Model<"openai-codex-responses">
+        | Model<typeof OPENAI_CODEX_API>
         | undefined;
       if (!canonicalModel) {
         throw new Error(`Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`);
@@ -70,7 +70,7 @@ function streamSimpleOpenAICodexFast(
       const apiKey = await authStorage.getApiKey(OPENAI_CODEX_PROVIDER, { includeFallback: false });
       if (!apiKey) {
         throw new Error(
-          `No stored ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
+          `No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
         );
       }
 
@@ -78,25 +78,12 @@ function streamSimpleOpenAICodexFast(
         ? clampThinkingLevel(canonicalModel, options.reasoning)
         : undefined;
       const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-      const inner = streamOpenAICodexResponses(
-        canonicalModel,
-        {
-          ...context,
-          messages: context.messages.map((message) =>
-            message.role === "assistant" &&
-            (message.provider === OPENAI_CODEX_FAST_PROVIDER ||
-              message.api === OPENAI_CODEX_FAST_API)
-              ? { ...message, provider: OPENAI_CODEX_PROVIDER, api: OPENAI_CODEX_API }
-              : message,
-          ),
-        },
-        {
-          ...options,
-          apiKey,
-          serviceTier: "priority",
-          ...(reasoningEffort ? { reasoningEffort } : {}),
-        },
-      );
+      const inner = streamOpenAICodexResponses(canonicalModel, context, {
+        ...options,
+        apiKey,
+        serviceTier: "priority",
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      });
 
       for await (const event of inner) {
         outer.push(event);
@@ -144,21 +131,22 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    const branch = ctx.sessionManager.getBranch();
-    for (let i = branch.length - 1; i >= 0; i -= 1) {
-      const entry = branch[i];
-      if (entry?.type !== "model_change") continue;
-      const { provider, modelId } = entry as ModelChangeEntry;
-      if (provider !== OPENAI_CODEX_FAST_PROVIDER) return;
-      if (ctx.model?.provider === OPENAI_CODEX_FAST_PROVIDER && ctx.model.id === modelId) {
-        return;
-      }
+    const latestModelChange = ctx.sessionManager
+      .getBranch()
+      .findLast((entry): entry is ModelChangeEntry => entry.type === "model_change");
 
-      const fastModel = ctx.modelRegistry.find(OPENAI_CODEX_FAST_PROVIDER, modelId);
-      if (fastModel) {
-        await pi.setModel(fastModel);
-      }
+    if (latestModelChange?.provider !== OPENAI_CODEX_FAST_PROVIDER) {
       return;
+    }
+
+    const { modelId } = latestModelChange;
+    if (ctx.model?.provider === OPENAI_CODEX_FAST_PROVIDER && ctx.model.id === modelId) {
+      return;
+    }
+
+    const fastModel = ctx.modelRegistry.find(OPENAI_CODEX_FAST_PROVIDER, modelId);
+    if (fastModel) {
+      await pi.setModel(fastModel);
     }
   });
 }

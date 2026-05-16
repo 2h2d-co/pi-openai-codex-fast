@@ -11,7 +11,6 @@ Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-
   - `gpt-5.5`
   - `gpt-5.4`
   - `gpt-5.4-mini`
-- Canonicalizes prior `openai-codex-fast` assistant messages before delegation
 - Stores assistant messages canonically as built-in Codex:
   - `provider: "openai-codex"`
   - `api: "openai-codex-responses"`
@@ -47,6 +46,7 @@ openai-codex-fast/gpt-5.5
 
 ```bash
 npm install
+npm test # typecheck + integration tests against real Pi runtime/local Codex server
 npm run check
 npm run lint
 npm run fmt

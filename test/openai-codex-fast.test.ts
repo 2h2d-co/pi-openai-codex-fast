@@ -1,0 +1,483 @@
+import assert from "node:assert/strict";
+import { createServer, type IncomingHttpHeaders } from "node:http";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { test, type TestContext } from "node:test";
+import { fileURLToPath } from "node:url";
+import {
+  AuthStorage,
+  createAgentSession,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SessionManager,
+  SettingsManager,
+  type AgentSession,
+  type CreateAgentSessionResult,
+  type SessionStartEvent,
+} from "@earendil-works/pi-coding-agent";
+import { getModels, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+
+const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const extensionPath = resolve(rootDir, "extensions/openai-codex-fast/index.ts");
+
+const CODEX_PROVIDER = "openai-codex";
+const CODEX_API = "openai-codex-responses";
+const FAST_PROVIDER = "openai-codex-fast";
+const FAST_API = "openai-codex-fast-responses";
+const MODEL_ID = "gpt-5.5";
+const FAST_MODEL_IDS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5"];
+const SESSION_START_REASONS: SessionStartEvent["reason"][] = [
+  "startup",
+  "reload",
+  "new",
+  "resume",
+  "fork",
+];
+const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+const ACCOUNT_ID_CLAIM = "https://api.openai.com/auth";
+
+type SseEvent = Record<string, unknown>;
+
+interface UsageFixture {
+  input: number;
+  output: number;
+}
+
+interface CodexResponseBatch {
+  status?: number;
+  events?: SseEvent[];
+}
+
+interface CapturedRequest {
+  method: string | undefined;
+  url: string | undefined;
+  headers: IncomingHttpHeaders;
+  body: Record<string, unknown>;
+}
+
+interface CodexTestServer {
+  baseUrl: string;
+  requests: CapturedRequest[];
+}
+
+interface IntegrationSessionOptions {
+  codexBaseUrl?: string;
+  sessionManager?: SessionManager;
+  sessionStartReason?: SessionStartEvent["reason"];
+}
+
+type IntegrationSession = CreateAgentSessionResult & {
+  agentDir: string;
+  cwd: string;
+};
+
+function base64Json(value: unknown): string {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
+}
+
+function fakeCodexToken(): string {
+  return [
+    base64Json({ alg: "none", typ: "JWT" }),
+    base64Json({ [ACCOUNT_ID_CLAIM]: { chatgpt_account_id: "acct_test" } }),
+    "signature",
+  ].join(".");
+}
+
+async function writeCodexAuth(agentDir: string, token = fakeCodexToken()): Promise<void> {
+  await mkdir(agentDir, { recursive: true });
+  await writeFile(
+    join(agentDir, "auth.json"),
+    JSON.stringify({ [CODEX_PROVIDER]: { type: "api_key", key: token } }, null, 2),
+  );
+}
+
+async function clearCodexAuth(agentDir: string): Promise<void> {
+  await writeFile(join(agentDir, "auth.json"), "{}\n");
+}
+
+function responseCompleted(id: string, usage: UsageFixture = { input: 10, output: 5 }): SseEvent {
+  return {
+    type: "response.completed",
+    response: {
+      id,
+      status: "completed",
+      service_tier: "default",
+      usage: {
+        input_tokens: usage.input,
+        output_tokens: usage.output,
+        total_tokens: usage.input + usage.output,
+        input_tokens_details: { cached_tokens: 0 },
+      },
+    },
+  };
+}
+
+function textResponseEvents(text: string, id = "resp_text"): SseEvent[] {
+  return [
+    { type: "response.created", response: { id } },
+    {
+      type: "response.output_item.added",
+      item: { id: `msg_${id}`, type: "message", role: "assistant", content: [] },
+    },
+    {
+      type: "response.content_part.added",
+      part: { type: "output_text", text: "", annotations: [] },
+    },
+    { type: "response.output_text.delta", delta: text },
+    {
+      type: "response.output_item.done",
+      item: {
+        id: `msg_${id}`,
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text, annotations: [] }],
+      },
+    },
+    responseCompleted(id),
+  ];
+}
+
+function toolCallResponseEvents(id = "resp_tool"): SseEvent[] {
+  const args = JSON.stringify({ reason: "integration-test" });
+  return [
+    { type: "response.created", response: { id } },
+    {
+      type: "response.output_item.added",
+      item: {
+        id: `fc_${id}`,
+        type: "function_call",
+        call_id: `call_${id}`,
+        name: "missing_tool",
+        arguments: "",
+      },
+    },
+    { type: "response.function_call_arguments.delta", delta: args },
+    { type: "response.function_call_arguments.done", arguments: args },
+    {
+      type: "response.output_item.done",
+      item: {
+        id: `fc_${id}`,
+        type: "function_call",
+        call_id: `call_${id}`,
+        name: "missing_tool",
+        arguments: args,
+      },
+    },
+    responseCompleted(id),
+  ];
+}
+
+function sse(events: SseEvent[]): string {
+  return `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
+}
+
+async function startCodexServer(
+  t: TestContext,
+  responseBatches: CodexResponseBatch[],
+): Promise<CodexTestServer> {
+  const requests: CapturedRequest[] = [];
+  let requestIndex = 0;
+  const server = createServer(async (req, res) => {
+    let rawBody = "";
+    for await (const chunk of req) {
+      rawBody += chunk;
+    }
+
+    const body = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+    requests.push({ method: req.method, url: req.url, headers: req.headers, body });
+
+    const batch = responseBatches[Math.min(requestIndex, responseBatches.length - 1)] ?? {};
+    requestIndex += 1;
+
+    res.writeHead(batch.status ?? 200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+    });
+    res.end(sse(batch.events ?? []));
+  });
+
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", () => resolveListen()));
+  t.after(
+    () =>
+      new Promise<void>((resolveClose, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolveClose();
+          }
+        });
+      }),
+  );
+
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
+}
+
+function pointBuiltInCodexAt(baseUrl: string, t: TestContext): void {
+  const models = getModels(CODEX_PROVIDER);
+  const previousBaseUrls: Array<[Model<typeof CODEX_API>, string]> = models.map((model) => [
+    model,
+    model.baseUrl,
+  ]);
+  for (const model of models) {
+    model.baseUrl = baseUrl;
+  }
+  t.after(() => {
+    for (const [model, previousBaseUrl] of previousBaseUrls) {
+      model.baseUrl = previousBaseUrl;
+    }
+  });
+}
+
+async function createIntegrationSession(
+  t: TestContext,
+  options: IntegrationSessionOptions = {},
+): Promise<IntegrationSession> {
+  const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-"));
+  const cwd = join(tempRoot, "cwd");
+  const agentDir = join(tempRoot, "agent");
+  await mkdir(cwd, { recursive: true });
+  await writeCodexAuth(agentDir);
+  t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+  if (options.codexBaseUrl) {
+    pointBuiltInCodexAt(options.codexBaseUrl, t);
+  }
+
+  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const settingsManager = SettingsManager.inMemory({
+    transport: "sse",
+    defaultThinkingLevel: "off",
+    retry: { enabled: false, provider: { maxRetries: 0 } },
+    compaction: { enabled: false },
+  });
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    additionalExtensionPaths: [extensionPath],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  });
+
+  const previousAgentDir = process.env[AGENT_DIR_ENV];
+  process.env[AGENT_DIR_ENV] = agentDir;
+  try {
+    await resourceLoader.reload();
+  } finally {
+    if (previousAgentDir === undefined) {
+      delete process.env[AGENT_DIR_ENV];
+    } else {
+      process.env[AGENT_DIR_ENV] = previousAgentDir;
+    }
+  }
+
+  const initialModel = modelRegistry.find(CODEX_PROVIDER, MODEL_ID);
+  assert.ok(initialModel, `Expected built-in ${CODEX_PROVIDER}/${MODEL_ID} to exist`);
+
+  const result = await createAgentSession({
+    cwd,
+    agentDir,
+    authStorage,
+    modelRegistry,
+    settingsManager,
+    sessionManager: options.sessionManager ?? SessionManager.inMemory(cwd),
+    resourceLoader,
+    model: initialModel,
+    thinkingLevel: "off",
+    noTools: "all",
+    ...(options.sessionStartReason
+      ? {
+          sessionStartEvent: { type: "session_start", reason: options.sessionStartReason } as const,
+        }
+      : {}),
+  });
+  t.after(() => result.session.dispose());
+
+  assert.deepEqual(result.extensionsResult.errors, []);
+  return { ...result, agentDir, cwd };
+}
+
+async function selectFastModel(session: AgentSession, modelId = MODEL_ID): Promise<Model<Api>> {
+  const fastModel = session.modelRegistry.find(FAST_PROVIDER, modelId);
+  assert.ok(fastModel, `Expected registered ${FAST_PROVIDER}/${modelId} model`);
+  await session.setModel(fastModel);
+  assert.equal(session.model?.provider, FAST_PROVIDER);
+  assert.equal(session.model?.id, modelId);
+  return fastModel;
+}
+
+function assistantMessages(session: AgentSession): AssistantMessage[] {
+  const messages: AssistantMessage[] = [];
+  for (const entry of session.sessionManager.getBranch()) {
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      messages.push(entry.message);
+    }
+  }
+  return messages;
+}
+
+function assertCanonicalAssistantMessages(session: AgentSession): void {
+  for (const message of assistantMessages(session)) {
+    assert.equal(message.provider, CODEX_PROVIDER);
+    assert.equal(message.api, CODEX_API);
+  }
+}
+
+void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
+  const { session } = await createIntegrationSession(t);
+  const fastModels = session.modelRegistry
+    .getAll()
+    .filter((model) => model.provider === FAST_PROVIDER);
+
+  assert.deepEqual(fastModels.map((model) => model.id).sort(), [...FAST_MODEL_IDS].sort());
+  assert.ok(fastModels.every((model) => model.api === FAST_API));
+  assert.ok(!fastModels.some((model) => model.id === "gpt-5.2"));
+  assert.equal(session.extensionRunner.hasHandlers("session_start"), true);
+  assert.equal(session.extensionRunner.hasHandlers("session_tree"), false);
+});
+
+void test("runs a real Pi prompt through fast Codex as priority while storing canonical assistant history", async (t) => {
+  const server = await startCodexServer(t, [{ events: textResponseEvents("fast ok") }]);
+  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
+
+  await selectFastModel(session);
+  await session.prompt("hello from integration", { expandPromptTemplates: false });
+
+  assert.equal(server.requests.length, 1);
+  const request = server.requests[0];
+  assert.ok(request);
+  assert.equal(request.method, "POST");
+  assert.equal(request.url, "/codex/responses");
+  assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
+  assert.equal(request.body.model, MODEL_ID);
+  assert.equal(request.body.service_tier, "priority");
+
+  const messages = assistantMessages(session);
+  assert.equal(messages.length, 1);
+  const message = messages[0];
+  assert.ok(message);
+  assert.equal(message.provider, CODEX_PROVIDER);
+  assert.equal(message.api, CODEX_API);
+  const content = message.content[0];
+  if (!content || content.type !== "text") {
+    assert.fail("Expected a text assistant message");
+  }
+  assert.equal(content.text, "fast ok");
+  assertCanonicalAssistantMessages(session);
+  assert.ok(!session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
+});
+
+void test("stores tool-calling fast replies canonically through the real Pi agent loop", async (t) => {
+  const server = await startCodexServer(t, [
+    { events: toolCallResponseEvents() },
+    { events: textResponseEvents("tool follow-up complete", "resp_after_tool") },
+  ]);
+  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
+
+  await selectFastModel(session);
+  await session.prompt("please call a tool", { expandPromptTemplates: false });
+
+  assert.equal(server.requests.length, 2);
+  assert.ok(server.requests.every((request) => request.body.service_tier === "priority"));
+
+  const messages = assistantMessages(session);
+  assert.equal(messages.length, 2);
+  const firstMessage = messages[0];
+  const secondMessage = messages[1];
+  assert.ok(firstMessage);
+  assert.ok(secondMessage);
+  assert.equal(firstMessage.provider, CODEX_PROVIDER);
+  assert.equal(firstMessage.api, CODEX_API);
+  const firstContent = firstMessage.content[0];
+  if (!firstContent || firstContent.type !== "toolCall") {
+    assert.fail("Expected first assistant message to contain a tool call");
+  }
+  const secondContent = secondMessage.content[0];
+  if (!secondContent || secondContent.type !== "text") {
+    assert.fail("Expected second assistant message to contain text");
+  }
+  assert.equal(secondContent.text, "tool follow-up complete");
+  assertCanonicalAssistantMessages(session);
+});
+
+void test("stores fast setup errors canonically without sending a provider request", async (t) => {
+  const server = await startCodexServer(t, [
+    { events: textResponseEvents("should not be requested") },
+  ]);
+  const { session, agentDir } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
+
+  await selectFastModel(session);
+  await clearCodexAuth(agentDir);
+  await session.prompt("this should fail before fetch", { expandPromptTemplates: false });
+
+  assert.equal(server.requests.length, 0);
+  const messages = assistantMessages(session);
+  assert.equal(messages.length, 1);
+  const message = messages[0];
+  assert.ok(message);
+  assert.equal(message.provider, CODEX_PROVIDER);
+  assert.equal(message.api, CODEX_API);
+  assert.equal(message.stopReason, "error");
+  assert.ok(message.errorMessage);
+  assert.match(message.errorMessage, /No openai-codex auth found/);
+});
+
+void test("recovers fast mode through Pi session_start for every supported reason", async (t) => {
+  for (const reason of SESSION_START_REASONS) {
+    const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-recovery-"));
+    const cwd = join(tempRoot, "cwd");
+    await mkdir(cwd, { recursive: true });
+    t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+    const sessionManager = SessionManager.inMemory(cwd);
+    sessionManager.appendModelChange(FAST_PROVIDER, MODEL_ID);
+    sessionManager.appendMessage({ role: "user", content: "prior message", timestamp: Date.now() });
+
+    const { session } = await createIntegrationSession(t, {
+      sessionManager,
+      sessionStartReason: reason,
+    });
+    assert.notEqual(session.model?.provider, FAST_PROVIDER);
+
+    await session.bindExtensions({});
+    assert.equal(session.model?.provider, FAST_PROVIDER, reason);
+    assert.equal(session.model?.id, MODEL_ID, reason);
+  }
+});
+
+void test("does not recover fast mode when the latest overall model_change is not fast", async (t) => {
+  for (const provider of [CODEX_PROVIDER, "anthropic"]) {
+    const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-recovery-"));
+    const cwd = join(tempRoot, "cwd");
+    await mkdir(cwd, { recursive: true });
+    t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+    const sessionManager = SessionManager.inMemory(cwd);
+    sessionManager.appendModelChange(FAST_PROVIDER, MODEL_ID);
+    sessionManager.appendMessage({
+      role: "user",
+      content: "prior fast branch",
+      timestamp: Date.now(),
+    });
+    sessionManager.appendModelChange(
+      provider,
+      provider === CODEX_PROVIDER ? MODEL_ID : "claude-sonnet",
+    );
+    sessionManager.appendMessage({ role: "user", content: "latest branch", timestamp: Date.now() });
+
+    const { session } = await createIntegrationSession(t, {
+      sessionManager,
+      sessionStartReason: "startup",
+    });
+    await session.bindExtensions({});
+
+    assert.notEqual(session.model?.provider, FAST_PROVIDER, provider);
+  }
+});
