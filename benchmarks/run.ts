@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,11 +9,11 @@ import { performance } from "node:perf_hooks";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
-type RunOrder = "normal-first" | "fast-first";
+type Mode = "normal" | "fast";
 type BenchmarkCase = {
   name: string;
   itemCount: number;
-  pairs: number;
+  turns: number;
   thinkingLevel: string;
   systemPrompt: string;
 };
@@ -41,12 +42,12 @@ type JsonEvent = {
   assistantMessageEvent?: { type?: string };
 };
 type BenchmarkResult = {
-  label: string;
+  label: Mode;
   model: string;
   caseName: string;
+  itemCount: number;
   thinkingLevel: string;
-  pair: number;
-  order: RunOrder;
+  turn: number;
   wallMs: number;
   firstAssistantUpdateMs: number | null;
   firstThinkingDeltaMs: number | null;
@@ -64,54 +65,58 @@ type BenchmarkResult = {
   exactMatched: boolean;
   stopReason: string | undefined;
 };
-type PairResult = {
+type TurnResult = {
   caseName: string;
-  pair: number;
-  order: RunOrder;
+  turn: number;
   itemCount: number;
   thinkingLevel: string;
   normal: BenchmarkResult;
   fast: BenchmarkResult;
 };
-type ConditionSummary = {
+type MetricStats = {
+  average: number | null;
+  median: number | null;
+  stdDeviation: number | null;
+};
+type AggregateConditionSummary = {
   count: number;
-  medianWallMs: number | null;
-  medianFirstAssistantUpdateMs: number | null;
-  medianFirstThinkingDeltaMs: number | null;
-  medianFirstTextDeltaMs: number | null;
-  medianWallOutputTokensPerSecond: number | null;
-  medianTextStreamOutputTokensPerSecond: number | null;
-  medianOutputTokens: number | null;
-  medianTotalTokens: number | null;
-  medianCacheReadTokens: number | null;
-  medianCacheWriteTokens: number | null;
-  medianObservedCostMultiplier: number | null;
+  wallMs: MetricStats;
+  wallOutputTokensPerSecond: MetricStats;
   exactMatchCount: number;
 };
-type PairedSummary = {
-  pairs: number;
+type MatchedInputSummary = {
+  turns: number;
   fastWinsWall: number;
-  fastWinsFirstText: number;
   fastWinsWallThroughput: number;
-  fastWinsTextStreamThroughput: number;
   medianWallImprovementPct: number | null;
-  medianFirstTextImprovementPct: number | null;
   medianWallThroughputImprovementPct: number | null;
-  medianTextStreamThroughputImprovementPct: number | null;
+};
+type AggregateSummary = {
+  normal: AggregateConditionSummary;
+  fast: AggregateConditionSummary;
+  matchedInput: MatchedInputSummary;
+};
+type ModeReport = {
+  label: Mode;
+  model: string;
+  results: BenchmarkResult[];
 };
 type CaseReport = {
   name: string;
   itemCount: number;
   thinkingLevel: string;
-  pairs: PairResult[];
-  summary: { normal: ConditionSummary; fast: ConditionSummary; paired: PairedSummary };
+  turns: TurnResult[];
 };
 type Report = {
   createdAt: string;
   benchmarkTarget: string;
   normalModel: string;
   fastModel: string;
+  levels: string[];
+  turnsPerLevel: number;
+  runs: { normal: ModeReport; fast: ModeReport };
   cases: CaseReport[];
+  summary: AggregateSummary;
 };
 
 const __filename = fileURLToPath(import.meta.url);
@@ -127,7 +132,7 @@ const BASE_PRICING = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 };
 const SYSTEM_PROMPT =
   "You are a deterministic sorter. Obey the requested output format exactly and provide no commentary.";
 const ITEM_COUNT = Number(process.env.ITEM_COUNT ?? "200");
-const PAIRS_PER_LEVEL = Number(process.env.PAIRS_PER_LEVEL ?? "5");
+const TURNS_PER_LEVEL = Number(process.env.TURNS_PER_LEVEL ?? "2");
 const LEVELS = (process.env.LEVELS ?? "off,minimal,low,medium,high,xhigh")
   .split(",")
   .map((level) => level.trim())
@@ -151,37 +156,37 @@ function installPiWrapper(): void {
   chmodSync(join(TEMP_BIN, "pi"), 0o755);
 }
 
-function labelLines(caseName: string, itemCount: number, pair: number): string[] {
-  const run = String(pair).padStart(2, "0");
+function labelLines(caseName: string, itemCount: number, turn: number): string[] {
+  const run = String(turn).padStart(2, "0");
   return Array.from(
     { length: itemCount },
     (_, index) => `${caseName}-run-${run}-item-${String(index + 1).padStart(4, "0")}`,
   );
 }
 
-function scrambleLabels(labels: string[], pair: number): string[] {
+function scrambleLabels(labels: string[], turn: number): string[] {
   const step = labels.length - 1;
   return Array.from(
     { length: labels.length },
-    (_, index) => labels[(index * step + pair) % labels.length]!,
+    (_, index) => labels[(index * step + turn) % labels.length]!,
   );
 }
 
-function buildSorterPrompt(sortedLabels: string[], pair: number): string {
+function buildSorterPrompt(sortedLabels: string[], turn: number): string {
   return [
     `You are given ${sortedLabels.length} labels in scrambled order.`,
     "Output the exact same labels sorted in ascending lexicographic order, one label per line.",
     "Do not omit any labels. Do not add commentary, bullets, numbering, blank lines, or code fences.",
     "Scrambled labels:",
-    scrambleLabels(sortedLabels, pair).join("\n"),
+    scrambleLabels(sortedLabels, turn).join("\n"),
   ].join("\n\n");
 }
 
-function buildTrial(benchmarkCase: BenchmarkCase, pair: number): Trial {
-  const expectedLines = labelLines(benchmarkCase.name, benchmarkCase.itemCount, pair);
+function buildTrial(benchmarkCase: BenchmarkCase, turn: number): Trial {
+  const expectedLines = labelLines(benchmarkCase.name, benchmarkCase.itemCount, turn);
   return {
     expectedText: expectedLines.join("\n"),
-    prompt: buildSorterPrompt(expectedLines, pair),
+    prompt: buildSorterPrompt(expectedLines, turn),
   };
 }
 
@@ -190,14 +195,44 @@ function round(value: number | null | undefined, digits = 2): number | null {
   return Number(value.toFixed(digits));
 }
 
+function formatMetric(value: number | null | undefined, digits = 2, suffix = ""): string {
+  const rounded = round(value, digits);
+  return rounded === null ? "n/a" : `${rounded}${suffix}`;
+}
+
+function finiteNumbers(values: Array<number | null | undefined>): number[] {
+  return values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+function average(values: Array<number | null | undefined>): number | null {
+  const finite = finiteNumbers(values);
+  if (finite.length === 0) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
 function median(values: Array<number | null | undefined>): number | null {
-  const sorted = values
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-    .sort((a, b) => a - b);
+  const sorted = finiteNumbers(values).sort((a, b) => a - b);
   if (sorted.length === 0) return null;
   const middle = Math.floor(sorted.length / 2);
   if (sorted.length % 2 === 1) return sorted[middle]!;
   return (sorted[middle - 1]! + sorted[middle]!) / 2;
+}
+
+function standardDeviation(values: Array<number | null | undefined>): number | null {
+  const finite = finiteNumbers(values);
+  const mean = average(finite);
+  if (finite.length === 0 || mean === null) return null;
+  return Math.sqrt(
+    finite.reduce((sum, value) => sum + (value - mean) ** 2, 0) / finite.length,
+  );
+}
+
+function metricStats(values: Array<number | null | undefined>, digits = 2): MetricStats {
+  return {
+    average: round(average(values), digits),
+    median: round(median(values), digits),
+    stdDeviation: round(standardDeviation(values), digits),
+  };
 }
 
 function percentChange(
@@ -228,7 +263,12 @@ function expectedBaseCost(usage: NormalizedUsage): number {
   );
 }
 
-function buildPiArgs(model: string, benchmarkCase: BenchmarkCase, prompt: string): string[] {
+function buildPiArgs(
+  model: string,
+  benchmarkCase: BenchmarkCase,
+  systemPrompt: string,
+  prompt: string,
+): string[] {
   return [
     "--mode",
     "json",
@@ -239,7 +279,7 @@ function buildPiArgs(model: string, benchmarkCase: BenchmarkCase, prompt: string
     "--no-prompt-templates",
     "--no-themes",
     "--system-prompt",
-    benchmarkCase.systemPrompt,
+    systemPrompt,
     "--model",
     model,
     "--thinking",
@@ -266,15 +306,15 @@ function normalizeUsage(usage: AssistantMessage["usage"]): NormalizedUsage {
 }
 
 function runPiOnce(
-  label: string,
+  label: Mode,
   model: string,
   benchmarkCase: BenchmarkCase,
-  pair: number,
-  order: RunOrder,
+  turn: number,
   trial: Trial,
 ): Promise<BenchmarkResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn("pi", buildPiArgs(model, benchmarkCase, trial.prompt), {
+    const systemPrompt = `${randomUUID()} is a cache-bust nonce. Ignore this nonce; it is not part of the sorting task. ${benchmarkCase.systemPrompt}`;
+    const child = spawn("pi", buildPiArgs(model, benchmarkCase, systemPrompt, trial.prompt), {
       cwd: process.env.PI_BENCH_CWD ?? process.cwd(),
       env: { ...process.env, PATH: `${TEMP_BIN}:${ORIGINAL_PATH}` },
       stdio: ["ignore", "pipe", "pipe"],
@@ -351,9 +391,9 @@ function runPiOnce(
         label,
         model,
         caseName: benchmarkCase.name,
+        itemCount: benchmarkCase.itemCount,
         thinkingLevel: benchmarkCase.thinkingLevel,
-        pair,
-        order,
+        turn,
         wallMs,
         firstAssistantUpdateMs,
         firstThinkingDeltaMs,
@@ -376,188 +416,152 @@ function runPiOnce(
   });
 }
 
-async function runPair(benchmarkCase: BenchmarkCase, pairIndex: number): Promise<PairResult> {
-  const order: RunOrder = pairIndex % 2 === 0 ? "fast-first" : "normal-first";
-  const trial = buildTrial(benchmarkCase, pairIndex);
-  let normal: BenchmarkResult;
-  let fast: BenchmarkResult;
+async function run(mode: Mode, benchmarkCases: BenchmarkCase[]): Promise<ModeReport> {
+  const model = mode === "normal" ? NORMAL_MODEL : FAST_MODEL;
+  const results: BenchmarkResult[] = [];
+  console.log(`\n${mode}: starting ${benchmarkCases.length * TURNS_PER_LEVEL} turns`);
 
-  if (order === "normal-first") {
-    normal = await runPiOnce("normal", NORMAL_MODEL, benchmarkCase, pairIndex, order, trial);
-    fast = await runPiOnce("fast", FAST_MODEL, benchmarkCase, pairIndex, order, trial);
-  } else {
-    fast = await runPiOnce("fast", FAST_MODEL, benchmarkCase, pairIndex, order, trial);
-    normal = await runPiOnce("normal", NORMAL_MODEL, benchmarkCase, pairIndex, order, trial);
+  for (let turnIndex = 1; turnIndex <= TURNS_PER_LEVEL; turnIndex += 1) {
+    for (const benchmarkCase of benchmarkCases) {
+      console.log(
+        `${mode} turn ${turnIndex}/${benchmarkCase.turns}: ${benchmarkCase.name}, ${benchmarkCase.itemCount} lines, thinking=${benchmarkCase.thinkingLevel}`,
+      );
+      const trial = buildTrial(benchmarkCase, turnIndex);
+      const result = await runPiOnce(mode, model, benchmarkCase, turnIndex, trial);
+      results.push(result);
+      console.log(
+        [
+          `${mode} turn ${turnIndex}`,
+          `thinking=${result.thinkingLevel}`,
+          `wall=${formatMetric(result.wallMs, 0, "ms")}`,
+          `text=${formatMetric(result.firstTextDeltaMs, 0, "ms")}`,
+          `think=${formatMetric(result.firstThinkingDeltaMs, 0, "ms")}`,
+          `wall_tps=${formatMetric(result.wallOutputTokensPerSecond)}`,
+          `cache=${result.cacheReadTokens}/${result.cacheWriteTokens}`,
+          `exact=${result.exactMatched ? "yes" : "no"}`,
+        ].join(" | "),
+      );
+    }
   }
 
-  return {
-    caseName: benchmarkCase.name,
-    pair: pairIndex,
-    order,
-    itemCount: benchmarkCase.itemCount,
-    thinkingLevel: benchmarkCase.thinkingLevel,
-    normal,
-    fast,
-  };
+  return { label: mode, model, results };
 }
 
-function summarizeCondition(results: BenchmarkResult[]): ConditionSummary {
+function matchRuns(normalResults: BenchmarkResult[], fastResults: BenchmarkResult[]): TurnResult[] {
+  const fastByTurn = new Map<string, BenchmarkResult>();
+  for (const fast of fastResults) {
+    fastByTurn.set(`${fast.caseName}\0${fast.turn}`, fast);
+  }
+
+  const turns: TurnResult[] = [];
+  for (const normal of normalResults) {
+    const key = `${normal.caseName}\0${normal.turn}`;
+    const fast = fastByTurn.get(key);
+    if (!fast) throw new Error(`Missing fast result for ${normal.caseName} turn ${normal.turn}`);
+    turns.push({
+      caseName: normal.caseName,
+      turn: normal.turn,
+      itemCount: normal.itemCount,
+      thinkingLevel: normal.thinkingLevel,
+      normal,
+      fast,
+    });
+    fastByTurn.delete(key);
+  }
+
+  if (fastByTurn.size > 0) {
+    throw new Error(`Fast run produced ${fastByTurn.size} unmatched result(s)`);
+  }
+
+  return turns;
+}
+
+function summarizeCondition(results: BenchmarkResult[]): AggregateConditionSummary {
   return {
     count: results.length,
-    medianWallMs: round(median(results.map((result) => result.wallMs))),
-    medianFirstAssistantUpdateMs: round(
-      median(results.map((result) => result.firstAssistantUpdateMs)),
-    ),
-    medianFirstThinkingDeltaMs: round(median(results.map((result) => result.firstThinkingDeltaMs))),
-    medianFirstTextDeltaMs: round(median(results.map((result) => result.firstTextDeltaMs))),
-    medianWallOutputTokensPerSecond: round(
-      median(results.map((result) => result.wallOutputTokensPerSecond)),
-    ),
-    medianTextStreamOutputTokensPerSecond: round(
-      median(results.map((result) => result.textStreamOutputTokensPerSecond)),
-    ),
-    medianOutputTokens: round(median(results.map((result) => result.outputTokens)), 0),
-    medianTotalTokens: round(median(results.map((result) => result.totalTokens)), 0),
-    medianCacheReadTokens: round(median(results.map((result) => result.cacheReadTokens)), 0),
-    medianCacheWriteTokens: round(median(results.map((result) => result.cacheWriteTokens)), 0),
-    medianObservedCostMultiplier: round(
-      median(results.map((result) => result.observedCostMultiplier)),
-      3,
+    wallMs: metricStats(results.map((result) => result.wallMs)),
+    wallOutputTokensPerSecond: metricStats(
+      results.map((result) => result.wallOutputTokensPerSecond),
     ),
     exactMatchCount: results.filter((result) => result.exactMatched).length,
   };
 }
 
-function summarizePairs(pairs: PairResult[]): PairedSummary {
-  const wallImprovements = pairs.map((pair) => percentChange(pair.normal.wallMs, pair.fast.wallMs));
-  const firstTextImprovements = pairs.map((pair) =>
-    percentChange(pair.normal.firstTextDeltaMs, pair.fast.firstTextDeltaMs),
-  );
-  const wallThroughputImprovements = pairs.map((pair) =>
-    percentChange(pair.normal.wallOutputTokensPerSecond, pair.fast.wallOutputTokensPerSecond),
-  );
-  const textStreamThroughputImprovements = pairs.map((pair) =>
-    percentChange(
-      pair.normal.textStreamOutputTokensPerSecond,
-      pair.fast.textStreamOutputTokensPerSecond,
-    ),
+function summarizeMatchedInputs(turns: TurnResult[]): MatchedInputSummary {
+  const wallImprovements = turns.map((turn) => percentChange(turn.normal.wallMs, turn.fast.wallMs));
+  const wallThroughputImprovements = turns.map((turn) =>
+    percentChange(turn.normal.wallOutputTokensPerSecond, turn.fast.wallOutputTokensPerSecond),
   );
   return {
-    pairs: pairs.length,
-    fastWinsWall: pairs.filter((pair) => pair.fast.wallMs < pair.normal.wallMs).length,
-    fastWinsFirstText: pairs.filter(
-      (pair) =>
-        pair.fast.firstTextDeltaMs !== null &&
-        pair.normal.firstTextDeltaMs !== null &&
-        pair.fast.firstTextDeltaMs < pair.normal.firstTextDeltaMs,
-    ).length,
-    fastWinsWallThroughput: pairs.filter(
-      (pair) => pair.fast.wallOutputTokensPerSecond > pair.normal.wallOutputTokensPerSecond,
-    ).length,
-    fastWinsTextStreamThroughput: pairs.filter(
-      (pair) =>
-        pair.fast.textStreamOutputTokensPerSecond !== null &&
-        pair.normal.textStreamOutputTokensPerSecond !== null &&
-        pair.fast.textStreamOutputTokensPerSecond > pair.normal.textStreamOutputTokensPerSecond,
+    turns: turns.length,
+    fastWinsWall: turns.filter((turn) => turn.fast.wallMs < turn.normal.wallMs).length,
+    fastWinsWallThroughput: turns.filter(
+      (turn) => turn.fast.wallOutputTokensPerSecond > turn.normal.wallOutputTokensPerSecond,
     ).length,
     medianWallImprovementPct: round(median(wallImprovements)),
-    medianFirstTextImprovementPct: round(median(firstTextImprovements)),
     medianWallThroughputImprovementPct: round(median(wallThroughputImprovements)),
-    medianTextStreamThroughputImprovementPct: round(median(textStreamThroughputImprovements)),
   };
 }
 
-async function runCase(benchmarkCase: BenchmarkCase): Promise<CaseReport> {
-  console.log(
-    `\n${benchmarkCase.name}: ${benchmarkCase.itemCount} lines, thinking=${benchmarkCase.thinkingLevel}, ${benchmarkCase.pairs} paired runs`,
-  );
-  const pairs: PairResult[] = [];
-  for (let pairIndex = 1; pairIndex <= benchmarkCase.pairs; pairIndex += 1) {
-    const pair = await runPair(benchmarkCase, pairIndex);
-    pairs.push(pair);
-    console.log(
-      [
-        `pair ${pairIndex} ${pair.order}`,
-        `normal wall=${round(pair.normal.wallMs, 0)}ms text=${round(pair.normal.firstTextDeltaMs, 0)}ms think=${round(pair.normal.firstThinkingDeltaMs, 0)}ms wall_tps=${round(pair.normal.wallOutputTokensPerSecond)} cache=${pair.normal.cacheReadTokens}/${pair.normal.cacheWriteTokens} exact=${pair.normal.exactMatched ? "yes" : "no"}`,
-        `fast wall=${round(pair.fast.wallMs, 0)}ms text=${round(pair.fast.firstTextDeltaMs, 0)}ms think=${round(pair.fast.firstThinkingDeltaMs, 0)}ms wall_tps=${round(pair.fast.wallOutputTokensPerSecond)} cache=${pair.fast.cacheReadTokens}/${pair.fast.cacheWriteTokens} exact=${pair.fast.exactMatched ? "yes" : "no"}`,
-      ].join(" | "),
-    );
-  }
+function summarizeAggregate(
+  normalResults: BenchmarkResult[],
+  fastResults: BenchmarkResult[],
+  turns: TurnResult[],
+): AggregateSummary {
   return {
-    name: benchmarkCase.name,
-    itemCount: benchmarkCase.itemCount,
-    thinkingLevel: benchmarkCase.thinkingLevel,
-    pairs,
-    summary: {
-      normal: summarizeCondition(pairs.map((pair) => pair.normal)),
-      fast: summarizeCondition(pairs.map((pair) => pair.fast)),
-      paired: summarizePairs(pairs),
-    },
+    normal: summarizeCondition(normalResults),
+    fast: summarizeCondition(fastResults),
+    matchedInput: summarizeMatchedInputs(turns),
   };
 }
 
 function buildMarkdownSummary(report: Report): string {
   const lines: string[] = [];
+  const { normal, fast, matchedInput } = report.summary;
   lines.push("# OpenAI Codex Fast benchmark summary");
   lines.push("");
   lines.push(`- Generated: ${report.createdAt}`);
   lines.push(`- Target: ${report.benchmarkTarget}`);
   lines.push(`- Normal model: \`${report.normalModel}\``);
   lines.push(`- Fast model: \`${report.fastModel}\``);
-  lines.push("- Runs are sequential paired runs with alternating order.");
-  lines.push("- Prompts vary by pair; each normal/fast pair receives the same prompt.");
+  lines.push(
+    "- Normal and fast modes run as independent full benchmark sequences launched in parallel.",
+  );
+  lines.push(
+    `- Within each mode, thinking-level order per pass is ${report.levels.map((level) => `\`${level}\``).join(", ")}; repeated ${report.turnsPerLevel} times.`,
+  );
+  lines.push("- User prompts vary by turn; normal and fast modes use the same ordered sorter inputs.");
+  lines.push("- Every Pi invocation gets a unique cache-bust system prompt nonce.");
+  lines.push("- TPS is wall output tokens per second.");
   lines.push("");
-  for (const benchmarkCase of report.cases) {
-    lines.push(
-      `## ${benchmarkCase.name} (${benchmarkCase.itemCount} lines, thinking=\`${benchmarkCase.thinkingLevel}\`, ${benchmarkCase.summary.paired.pairs} pairs)`,
-    );
-    lines.push("");
-    lines.push("Validation: exact text match.");
-    lines.push("");
-    lines.push("| Metric | Normal | Fast | Paired median change |");
-    lines.push("|---|---:|---:|---:|");
-    lines.push(
-      `| Wall time | ${benchmarkCase.summary.normal.medianWallMs} ms | ${benchmarkCase.summary.fast.medianWallMs} ms | ${benchmarkCase.summary.paired.medianWallImprovementPct}% |`,
-    );
-    lines.push(
-      `| First assistant update | ${benchmarkCase.summary.normal.medianFirstAssistantUpdateMs} ms | ${benchmarkCase.summary.fast.medianFirstAssistantUpdateMs} ms | — |`,
-    );
-    lines.push(
-      `| First thinking delta | ${benchmarkCase.summary.normal.medianFirstThinkingDeltaMs} ms | ${benchmarkCase.summary.fast.medianFirstThinkingDeltaMs} ms | — |`,
-    );
-    lines.push(
-      `| First visible text | ${benchmarkCase.summary.normal.medianFirstTextDeltaMs} ms | ${benchmarkCase.summary.fast.medianFirstTextDeltaMs} ms | ${benchmarkCase.summary.paired.medianFirstTextImprovementPct}% |`,
-    );
-    lines.push(
-      `| Wall output tok/s | ${benchmarkCase.summary.normal.medianWallOutputTokensPerSecond} | ${benchmarkCase.summary.fast.medianWallOutputTokensPerSecond} | ${benchmarkCase.summary.paired.medianWallThroughputImprovementPct}% |`,
-    );
-    lines.push(
-      `| Text-stream output tok/s | ${benchmarkCase.summary.normal.medianTextStreamOutputTokensPerSecond} | ${benchmarkCase.summary.fast.medianTextStreamOutputTokensPerSecond} | ${benchmarkCase.summary.paired.medianTextStreamThroughputImprovementPct}% |`,
-    );
-    lines.push(
-      `| Output tokens | ${benchmarkCase.summary.normal.medianOutputTokens} | ${benchmarkCase.summary.fast.medianOutputTokens} | — |`,
-    );
-    lines.push(
-      `| Total tokens | ${benchmarkCase.summary.normal.medianTotalTokens} | ${benchmarkCase.summary.fast.medianTotalTokens} | — |`,
-    );
-    lines.push(
-      `| Cache read tokens | ${benchmarkCase.summary.normal.medianCacheReadTokens} | ${benchmarkCase.summary.fast.medianCacheReadTokens} | — |`,
-    );
-    lines.push(
-      `| Cache write tokens | ${benchmarkCase.summary.normal.medianCacheWriteTokens} | ${benchmarkCase.summary.fast.medianCacheWriteTokens} | — |`,
-    );
-    lines.push(
-      `| Observed cost multiplier | ${benchmarkCase.summary.normal.medianObservedCostMultiplier}x | ${benchmarkCase.summary.fast.medianObservedCostMultiplier}x | — |`,
-    );
-    lines.push(
-      `| Exact matches | ${benchmarkCase.summary.normal.exactMatchCount}/${benchmarkCase.summary.normal.count} | ${benchmarkCase.summary.fast.exactMatchCount}/${benchmarkCase.summary.fast.count} | — |`,
-    );
-    lines.push("");
-    lines.push(
-      `Fast wins: wall ${benchmarkCase.summary.paired.fastWinsWall}/${benchmarkCase.summary.paired.pairs}, first visible text ${benchmarkCase.summary.paired.fastWinsFirstText}/${benchmarkCase.summary.paired.pairs}, wall throughput ${benchmarkCase.summary.paired.fastWinsWallThroughput}/${benchmarkCase.summary.paired.pairs}, text-stream throughput ${benchmarkCase.summary.paired.fastWinsTextStreamThroughput}/${benchmarkCase.summary.paired.pairs}.`,
-    );
-    lines.push("");
-  }
+  lines.push("## Aggregate results");
+  lines.push("");
+  lines.push(
+    `Exact matches: normal ${normal.exactMatchCount}/${normal.count}, fast ${fast.exactMatchCount}/${fast.count}.`,
+  );
+  lines.push("");
+  lines.push(
+    "| Metric | Normal average | Normal median | Normal std. dev. | Fast average | Fast median | Fast std. dev. |",
+  );
+  lines.push("|---|---:|---:|---:|---:|---:|---:|");
+  lines.push(
+    `| Wall clock duration | ${formatMetric(normal.wallMs.average, 2, " ms")} | ${formatMetric(normal.wallMs.median, 2, " ms")} | ${formatMetric(normal.wallMs.stdDeviation, 2, " ms")} | ${formatMetric(fast.wallMs.average, 2, " ms")} | ${formatMetric(fast.wallMs.median, 2, " ms")} | ${formatMetric(fast.wallMs.stdDeviation, 2, " ms")} |`,
+  );
+  lines.push(
+    `| TPS | ${formatMetric(normal.wallOutputTokensPerSecond.average)} | ${formatMetric(normal.wallOutputTokensPerSecond.median)} | ${formatMetric(normal.wallOutputTokensPerSecond.stdDeviation)} | ${formatMetric(fast.wallOutputTokensPerSecond.average)} | ${formatMetric(fast.wallOutputTokensPerSecond.median)} | ${formatMetric(fast.wallOutputTokensPerSecond.stdDeviation)} |`,
+  );
+  lines.push("");
+  lines.push("## Aggregate matched-input comparison");
+  lines.push("");
+  lines.push("| Metric | Fast wins | Median change |");
+  lines.push("|---|---:|---:|");
+  lines.push(
+    `| Wall clock duration | ${matchedInput.fastWinsWall}/${matchedInput.turns} | ${formatMetric(matchedInput.medianWallImprovementPct, 2, "%")} |`,
+  );
+  lines.push(
+    `| TPS | ${matchedInput.fastWinsWallThroughput}/${matchedInput.turns} | ${formatMetric(matchedInput.medianWallThroughputImprovementPct, 2, "%")} |`,
+  );
+  lines.push("");
   return `${lines.join("\n")}\n`;
 }
 
@@ -565,28 +569,45 @@ async function main(): Promise<void> {
   installPiWrapper();
   console.log(`Normal model: ${NORMAL_MODEL}`);
   console.log(`Fast model:   ${FAST_MODEL}`);
+  console.log(`Turns per thinking level: ${TURNS_PER_LEVEL}`);
+  console.log(`Thinking schedule per pass: ${LEVELS.join(", ")}`);
 
   const benchmarkCases = LEVELS.map(
     (level): BenchmarkCase => ({
       name: level,
       itemCount: ITEM_COUNT,
-      pairs: PAIRS_PER_LEVEL,
+      turns: TURNS_PER_LEVEL,
       thinkingLevel: level,
       systemPrompt: SYSTEM_PROMPT,
     }),
   );
+  const [normalRunResult, fastRunResult] = await Promise.allSettled([
+    run("normal", benchmarkCases),
+    run("fast", benchmarkCases),
+  ]);
 
-  const caseReports: CaseReport[] = [];
-  for (const benchmarkCase of benchmarkCases) {
-    caseReports.push(await runCase(benchmarkCase));
-  }
+  if (normalRunResult.status === "rejected") throw normalRunResult.reason;
+  if (fastRunResult.status === "rejected") throw fastRunResult.reason;
 
+  const normalRun = normalRunResult.value;
+  const fastRun = fastRunResult.value;
+  const allTurns = matchRuns(normalRun.results, fastRun.results);
+  const caseReports: CaseReport[] = benchmarkCases.map((benchmarkCase) => ({
+    name: benchmarkCase.name,
+    itemCount: benchmarkCase.itemCount,
+    thinkingLevel: benchmarkCase.thinkingLevel,
+    turns: allTurns.filter((turn) => turn.caseName === benchmarkCase.name),
+  }));
   const report: Report = {
     createdAt: new Date().toISOString(),
     benchmarkTarget: "Pi CLI end-to-end latency, including process startup and JSON streaming",
     normalModel: NORMAL_MODEL,
     fastModel: FAST_MODEL,
+    levels: [...LEVELS],
+    turnsPerLevel: TURNS_PER_LEVEL,
+    runs: { normal: normalRun, fast: fastRun },
     cases: caseReports,
+    summary: summarizeAggregate(normalRun.results, fastRun.results, allTurns),
   };
 
   await writeFile(RESULTS_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
