@@ -1,0 +1,53 @@
+{
+  "name": "pi-openai-codex-fast",
+  "version": "0.0.1-alpha.0",
+  "description": "Pi package that adds an openai-codex-fast provider backed by OpenAI Codex priority service tier",
+  "keywords": [
+    "pi-package"
+  ],
+  "homepage": "https://github.com/2h2d-co/pi-openai-codex-fast#readme",
+  "bugs": {
+    "url": "https://github.com/2h2d-co/pi-openai-codex-fast/issues"
+  },
+  "license": "MIT",
+  "author": "Kaan Ozdokmeci",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2h2d-co/pi-openai-codex-fast.git"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "check": "tsc -p tsconfig.json",
+    "test": "npm run check",
+    "fmt": "oxfmt",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "release:publish": "npm run check && node ./scripts/publish.ts"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^0.74.0",
+    "@earendil-works/pi-coding-agent": "^0.74.0",
+    "@types/node": "^24",
+    "oxfmt": "^0.48.0",
+    "oxlint": "^1.63.0",
+    "oxlint-tsgolint": "^0.22.1",
+    "typescript": "^6"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}

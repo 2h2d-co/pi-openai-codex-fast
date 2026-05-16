@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+*.tsbuildinfo
+*.tgz
+
+# Package manager logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+
+# Local Pi state
+.pi/
+mise.local.toml
+
+# Local backups
+.backup/
+
+# Markdown files
+*.md
+!README.md
+!AGENTS.md
+
+# Benchmarks
+!benchmarks/
+!benchmarks/**

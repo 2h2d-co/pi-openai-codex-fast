@@ -1,0 +1,12 @@
+[tools]
+node = "24"
+
+[env]
+_.path = ["{{config_root}}/node_modules/.bin"]
+
+[shell_alias]
+pi = "command pi -e {{config_root}}"
+
+[tasks.benchmark]
+description = "Run the full OpenAI Codex Fast benchmark suite against the local extension"
+run = "node benchmarks/run.ts"
