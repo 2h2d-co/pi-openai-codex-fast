@@ -14,6 +14,7 @@ import {
   SettingsManager,
   type AgentSession,
   type CreateAgentSessionResult,
+  type ExtensionUIContext,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { getModels, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
@@ -59,6 +60,11 @@ interface CapturedRequest {
 interface CodexTestServer {
   baseUrl: string;
   requests: CapturedRequest[];
+}
+
+interface CapturedNotification {
+  message: string;
+  type: "info" | "warning" | "error";
 }
 
 interface IntegrationSessionOptions {
@@ -230,6 +236,41 @@ function pointBuiltInCodexAt(baseUrl: string, t: TestContext): void {
       model.baseUrl = previousBaseUrl;
     }
   });
+}
+
+function createCapturingUiContext(notifications: CapturedNotification[]): ExtensionUIContext {
+  return {
+    select: async () => undefined,
+    confirm: async () => false,
+    input: async () => undefined,
+    notify(message, type) {
+      notifications.push({ message, type: type ?? "info" });
+    },
+    onTerminalInput: () => () => {},
+    setStatus: () => {},
+    setWorkingMessage: () => {},
+    setWorkingVisible: () => {},
+    setWorkingIndicator: () => {},
+    setHiddenThinkingLabel: () => {},
+    setWidget: () => {},
+    setFooter: () => {},
+    setHeader: () => {},
+    setTitle: () => {},
+    custom: async <T>() => undefined as T,
+    pasteToEditor: () => {},
+    setEditorText: () => {},
+    getEditorText: () => "",
+    editor: async () => undefined,
+    addAutocompleteProvider: () => {},
+    setEditorComponent: () => {},
+    getEditorComponent: () => undefined,
+    theme: {} as ExtensionUIContext["theme"],
+    getAllThemes: () => [],
+    getTheme: () => undefined,
+    setTheme: () => ({ success: false, error: "UI not available in tests" }),
+    getToolsExpanded: () => false,
+    setToolsExpanded: () => {},
+  };
 }
 
 async function reloadResourceLoaderWithAgentDir(
@@ -408,6 +449,88 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
 
   assert.equal(retryConsoleErrors.join("\n"), "");
   assert.ok(result.session.modelRegistry.find(FAST_PROVIDER, MODEL_ID));
+});
+
+void test("drains disabled-load diagnostics and registers after auth is fixed for a new session", async (t) => {
+  const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-diagnostics-"));
+  const cwd = join(tempRoot, "cwd");
+  const agentDir = join(tempRoot, "agent");
+  await mkdir(cwd, { recursive: true });
+  await mkdir(agentDir, { recursive: true });
+  await clearCodexAuth(agentDir);
+  t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const settingsManager = SettingsManager.inMemory({});
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    agentDir,
+    settingsManager,
+    additionalExtensionPaths: [extensionPath],
+    noSkills: true,
+    noPromptTemplates: true,
+    noThemes: true,
+    noContextFiles: true,
+  });
+
+  await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
+  assert.equal(resourceLoader.getExtensions().extensions.length, 1);
+  assert.deepEqual(resourceLoader.getExtensions().errors, []);
+  assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
+  assert.equal(modelRegistry.find(FAST_PROVIDER, MODEL_ID), undefined);
+
+  const first = await createAgentSession({
+    cwd,
+    agentDir,
+    authStorage,
+    modelRegistry,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(cwd),
+    resourceLoader,
+    noTools: "all",
+  });
+  t.after(() => first.session.dispose());
+
+  const notifications: CapturedNotification[] = [];
+  const uiContext = createCapturingUiContext(notifications);
+  assert.equal(notifications.length, 0);
+  await first.session.bindExtensions({ uiContext });
+
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0]?.type, "error");
+  assert.match(notifications[0]?.message ?? "", /No openai-codex auth found/);
+  assert.equal(modelRegistry.find(FAST_PROVIDER, MODEL_ID), undefined);
+  assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
+
+  await writeCodexAuth(agentDir);
+  // Reuse the loaded extension runtime so this proves the first session_start drained its
+  // queued diagnostic instead of merely relying on a fresh extension instance.
+  const second = await createAgentSession({
+    cwd,
+    agentDir,
+    authStorage,
+    modelRegistry,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(cwd),
+    resourceLoader,
+    noTools: "all",
+    sessionStartEvent: {
+      type: "session_start",
+      reason: "new",
+      previousSessionFile: "previous-session.jsonl",
+    },
+  });
+  t.after(() => second.session.dispose());
+
+  assert.equal(notifications.length, 1);
+  await second.session.bindExtensions({ uiContext });
+
+  assert.equal(notifications.length, 1);
+  const fastModel = modelRegistry.find(FAST_PROVIDER, MODEL_ID);
+  assert.ok(fastModel);
+  assert.equal(fastModel.api, FAST_API);
+  assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
 });
 
 void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
