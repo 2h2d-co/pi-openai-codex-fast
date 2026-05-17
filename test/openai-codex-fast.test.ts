@@ -20,7 +20,7 @@ import {
 import { getModels, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, "extensions/openai-codex-fast/index.ts");
+const extensionPath = resolve(rootDir, "index.ts");
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";

@@ -70,7 +70,7 @@ npm run benchmark
 
 This package publishes these project files explicitly:
 
-- `extensions/`
+- `index.ts`
 - `README.md`
 - `LICENSE`
 
