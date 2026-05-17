@@ -337,7 +337,7 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
   }
 }
 
-void test("fails extension load when built-in Codex auth is missing", async (t) => {
+void test("loads extension disabled when built-in Codex auth is missing", async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-auth-"));
   const cwd = join(tempRoot, "cwd");
   const agentDir = join(tempRoot, "agent");
@@ -346,10 +346,13 @@ void test("fails extension load when built-in Codex auth is missing", async (t) 
   await clearCodexAuth(agentDir);
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
+  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
+  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const settingsManager = SettingsManager.inMemory({});
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
-    settingsManager: SettingsManager.inMemory({}),
+    settingsManager,
     additionalExtensionPaths: [extensionPath],
     noSkills: true,
     noPromptTemplates: true,
@@ -360,10 +363,51 @@ void test("fails extension load when built-in Codex auth is missing", async (t) 
   await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
 
   const extensionsResult = resourceLoader.getExtensions();
-  assert.equal(extensionsResult.extensions.length, 0);
+  assert.equal(extensionsResult.extensions.length, 1);
   assert.equal(extensionsResult.runtime.pendingProviderRegistrations.length, 0);
-  assert.equal(extensionsResult.errors.length, 1);
-  assert.match(extensionsResult.errors[0]?.error ?? "", /No openai-codex auth found/);
+  assert.deepEqual(extensionsResult.errors, []);
+
+  const result = await createAgentSession({
+    cwd,
+    agentDir,
+    authStorage,
+    modelRegistry,
+    settingsManager,
+    sessionManager: SessionManager.inMemory(cwd),
+    resourceLoader,
+    noTools: "all",
+  });
+  t.after(() => result.session.dispose());
+
+  const consoleErrors: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = (...args: unknown[]) => {
+    consoleErrors.push(args.map(String).join(" "));
+  };
+  try {
+    await result.session.bindExtensions({});
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.match(consoleErrors.join("\n"), /No openai-codex auth found/);
+  assert.doesNotMatch(consoleErrors.join("\n"), /\[openai-codex-fast\].*\[openai-codex-fast\]/);
+  assert.equal(result.session.modelRegistry.find(FAST_PROVIDER, MODEL_ID), undefined);
+  assert.ok(!result.session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
+
+  await writeCodexAuth(agentDir);
+  const retryConsoleErrors: string[] = [];
+  console.error = (...args: unknown[]) => {
+    retryConsoleErrors.push(args.map(String).join(" "));
+  };
+  try {
+    await result.session.bindExtensions({});
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  assert.equal(retryConsoleErrors.join("\n"), "");
+  assert.ok(result.session.modelRegistry.find(FAST_PROVIDER, MODEL_ID));
 });
 
 void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {

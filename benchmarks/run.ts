@@ -201,7 +201,9 @@ function formatMetric(value: number | null | undefined, digits = 2, suffix = "")
 }
 
 function finiteNumbers(values: Array<number | null | undefined>): number[] {
-  return values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return values.filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value),
+  );
 }
 
 function average(values: Array<number | null | undefined>): number | null {
@@ -222,9 +224,7 @@ function standardDeviation(values: Array<number | null | undefined>): number | n
   const finite = finiteNumbers(values);
   const mean = average(finite);
   if (finite.length === 0 || mean === null) return null;
-  return Math.sqrt(
-    finite.reduce((sum, value) => sum + (value - mean) ** 2, 0) / finite.length,
-  );
+  return Math.sqrt(finite.reduce((sum, value) => sum + (value - mean) ** 2, 0) / finite.length);
 }
 
 function metricStats(values: Array<number | null | undefined>, digits = 2): MetricStats {
@@ -530,7 +530,9 @@ function buildMarkdownSummary(report: Report): string {
   lines.push(
     `- Within each mode, thinking-level order per pass is ${report.levels.map((level) => `\`${level}\``).join(", ")}; repeated ${report.turnsPerLevel} times.`,
   );
-  lines.push("- User prompts vary by turn; normal and fast modes use the same ordered sorter inputs.");
+  lines.push(
+    "- User prompts vary by turn; normal and fast modes use the same ordered sorter inputs.",
+  );
   lines.push("- Every Pi invocation gets a unique cache-bust system prompt nonce.");
   lines.push("- TPS is wall output tokens per second.");
   lines.push("");

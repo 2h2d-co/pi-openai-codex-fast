@@ -42,17 +42,117 @@ const OPENAI_CODEX_FAST_MODELS = OPENAI_CODEX_MODELS.filter((model) =>
   }),
 );
 
+type ExtensionDiagnostic = {
+  type: "warning" | "error";
+  code: "auth-failed" | "missing-openai-codex-auth" | "no-fast-models" | "no-model-base-url";
+  message: string;
+};
+
+type Result<T> = { ok: true; value: T } | { ok: false; diagnostic: ExtensionDiagnostic };
+
 const authStorage = AuthStorage.create();
 
-async function requireOpenAICodexAuth(): Promise<string> {
-  authStorage.reload();
-  const apiKey = await authStorage.getApiKey(OPENAI_CODEX_PROVIDER, { includeFallback: false });
-  if (!apiKey) {
-    throw new Error(
-      `No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
-    );
+function authFailedDiagnostic(reason: string): ExtensionDiagnostic {
+  return {
+    type: "error",
+    code: "auth-failed",
+    message: `${OPENAI_CODEX_PROVIDER} auth failed: ${reason}`,
+  };
+}
+
+async function getOpenAICodexAuth(): Promise<Result<string>> {
+  try {
+    authStorage.drainErrors();
+    authStorage.reload();
+    const authErrors = authStorage.drainErrors();
+
+    const apiKey = await authStorage.getApiKey(OPENAI_CODEX_PROVIDER, { includeFallback: false });
+    authErrors.push(...authStorage.drainErrors());
+
+    if (apiKey) {
+      return { ok: true, value: apiKey };
+    }
+
+    if (authErrors.length > 0) {
+      return {
+        ok: false,
+        diagnostic: authFailedDiagnostic(authErrors.map((error) => error.message).join("; ")),
+      };
+    }
+
+    return {
+      ok: false,
+      diagnostic: {
+        type: "error",
+        code: "missing-openai-codex-auth",
+        message: `No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
+      },
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostic: authFailedDiagnostic(error instanceof Error ? error.message : String(error)),
+    };
   }
-  return apiKey;
+}
+
+function getFastProviderBaseUrl(): Result<string> {
+  if (OPENAI_CODEX_FAST_MODELS.length === 0) {
+    return {
+      ok: false,
+      diagnostic: {
+        type: "error",
+        code: "no-fast-models",
+        message: `No models available for ${OPENAI_CODEX_FAST_PROVIDER}. The provider will not be registered.`,
+      },
+    };
+  }
+
+  const baseUrl = OPENAI_CODEX_FAST_MODELS.find((model) => model.baseUrl)?.baseUrl;
+  if (!baseUrl) {
+    return {
+      ok: false,
+      diagnostic: {
+        type: "error",
+        code: "no-model-base-url",
+        message: `No base URL found for any ${OPENAI_CODEX_FAST_PROVIDER} model. The provider will not be registered.`,
+      },
+    };
+  }
+
+  return { ok: true, value: baseUrl };
+}
+
+function endWithCanonicalError(
+  stream: ReturnType<typeof createAssistantMessageEventStream>,
+  modelId: string,
+  errorMessage: string,
+  options?: SimpleStreamOptions,
+): void {
+  const message: AssistantMessage = {
+    role: "assistant",
+    content: [],
+    api: OPENAI_CODEX_API,
+    provider: OPENAI_CODEX_PROVIDER,
+    model: modelId,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: options?.signal?.aborted ? "aborted" : "error",
+    errorMessage,
+    timestamp: Date.now(),
+  };
+  stream.push({
+    type: "error",
+    reason: message.stopReason === "aborted" ? "aborted" : "error",
+    error: message,
+  });
+  stream.end(message);
 }
 
 function streamSimpleOpenAICodexFast(
@@ -66,10 +166,20 @@ function streamSimpleOpenAICodexFast(
     try {
       const codexModel = OPENAI_CODEX_MODELS.find((m) => m.id === model.id);
       if (!codexModel) {
-        throw new Error(`Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`);
+        endWithCanonicalError(
+          outer,
+          model.id,
+          `Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`,
+          options,
+        );
+        return;
       }
 
-      const apiKey = await requireOpenAICodexAuth();
+      const auth = await getOpenAICodexAuth();
+      if (!auth.ok) {
+        endWithCanonicalError(outer, model.id, auth.diagnostic.message, options);
+        return;
+      }
 
       const clampedReasoning = options?.reasoning
         ? clampThinkingLevel(codexModel, options.reasoning)
@@ -77,7 +187,7 @@ function streamSimpleOpenAICodexFast(
       const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
       const inner = streamOpenAICodexResponses(codexModel, context, {
         ...options,
-        apiKey,
+        apiKey: auth.value,
         serviceTier: "priority",
         ...(reasoningEffort ? { reasoningEffort } : {}),
       });
@@ -87,30 +197,12 @@ function streamSimpleOpenAICodexFast(
       }
       outer.end();
     } catch (error) {
-      const message: AssistantMessage = {
-        role: "assistant",
-        content: [],
-        api: OPENAI_CODEX_API,
-        provider: OPENAI_CODEX_PROVIDER,
-        model: model.id,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: options?.signal?.aborted ? "aborted" : "error",
-        errorMessage: error instanceof Error ? error.message : String(error),
-        timestamp: Date.now(),
-      };
-      outer.push({
-        type: "error",
-        reason: message.stopReason === "aborted" ? "aborted" : "error",
-        error: message,
-      });
-      outer.end(message);
+      endWithCanonicalError(
+        outer,
+        model.id,
+        error instanceof Error ? error.message : String(error),
+        options,
+      );
     }
   })();
 
@@ -118,31 +210,56 @@ function streamSimpleOpenAICodexFast(
 }
 
 export default async function (pi: ExtensionAPI) {
-  await requireOpenAICodexAuth();
+  const diagnostics: ExtensionDiagnostic[] = [];
+  let providerRegistered = false;
 
-  if (OPENAI_CODEX_FAST_MODELS.length === 0) {
-    throw new Error(
-      `[${OPENAI_CODEX_FAST_PROVIDER}]: No models available. The provider will not be registered.`,
-    );
+  async function registerFastProviderIfReady(): Promise<void> {
+    if (providerRegistered) {
+      return;
+    }
+
+    const auth = await getOpenAICodexAuth();
+    if (!auth.ok) {
+      diagnostics.push(auth.diagnostic);
+    }
+
+    const baseUrl = getFastProviderBaseUrl();
+    if (!baseUrl.ok) {
+      diagnostics.push(baseUrl.diagnostic);
+    }
+
+    if (!auth.ok || !baseUrl.ok) {
+      return;
+    }
+
+    pi.registerProvider(OPENAI_CODEX_FAST_PROVIDER, {
+      name: "OpenAI Codex Fast",
+      baseUrl: baseUrl.value,
+      apiKey: PLACEHOLDER_API_KEY,
+      api: OPENAI_CODEX_FAST_API,
+      models: OPENAI_CODEX_FAST_MODELS,
+      streamSimple: streamSimpleOpenAICodexFast,
+    });
+    providerRegistered = true;
   }
-
-  const baseUrl = OPENAI_CODEX_FAST_MODELS.find((model) => model.baseUrl)?.baseUrl;
-  if (!baseUrl) {
-    throw new Error(
-      `[${OPENAI_CODEX_FAST_PROVIDER}]: No base URL found for any model. The provider will not be registered.`,
-    );
-  }
-
-  pi.registerProvider(OPENAI_CODEX_FAST_PROVIDER, {
-    name: "OpenAI Codex Fast",
-    baseUrl,
-    apiKey: PLACEHOLDER_API_KEY,
-    api: OPENAI_CODEX_FAST_API,
-    models: OPENAI_CODEX_FAST_MODELS,
-    streamSimple: streamSimpleOpenAICodexFast,
-  });
 
   pi.on("session_start", async (_event, ctx) => {
+    if (!providerRegistered && diagnostics.length === 0) {
+      await registerFastProviderIfReady();
+    }
+    for (const diagnostic of diagnostics.splice(0)) {
+      if (ctx.hasUI) {
+        ctx.ui.notify(diagnostic.message, diagnostic.type);
+      } else if (diagnostic.type === "error") {
+        console.error(`[${OPENAI_CODEX_FAST_PROVIDER}] ${diagnostic.message}`);
+      } else {
+        console.warn(`[${OPENAI_CODEX_FAST_PROVIDER}] ${diagnostic.message}`);
+      }
+    }
+    if (!providerRegistered) {
+      return;
+    }
+
     const latestModelChange = ctx.sessionManager
       .getBranch()
       .findLast((entry): entry is ModelChangeEntry => entry.type === "model_change");
@@ -161,4 +278,6 @@ export default async function (pi: ExtensionAPI) {
       await pi.setModel(fastModel);
     }
   });
+
+  await registerFastProviderIfReady();
 }
