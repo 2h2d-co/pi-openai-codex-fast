@@ -6,7 +6,7 @@ _.path = ["{{config_root}}/node_modules/.bin"]
 
 [shell_alias]
 "pi:local" = "command pi -e {{config_root}}"
-"pi:npm" = "command pi -e npm:pi-openai-codex-fast@alpha"
+"pi:npm" = "command pi -e npm:pi-openai-codex-fast@latest"
 
 [tasks.benchmark]
 description = "Run the full OpenAI Codex Fast benchmark suite against the local extension"
