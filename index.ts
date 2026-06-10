@@ -8,6 +8,7 @@ import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
   getModels,
+  isContextOverflow,
   streamOpenAICodexResponses,
   type Api,
   type AssistantMessage,
@@ -193,7 +194,18 @@ function streamSimpleOpenAICodexFast(
       });
 
       for await (const event of inner) {
-        outer.push(event);
+        if (event.type === "error" && isContextOverflow(event.error, model.contextWindow)) {
+          outer.push({
+            ...event,
+            error: {
+              ...event.error,
+              provider: OPENAI_CODEX_FAST_PROVIDER,
+              model: model.id,
+            },
+          });
+        } else {
+          outer.push(event);
+        }
       }
       outer.end();
     } catch (error) {

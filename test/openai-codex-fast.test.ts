@@ -13,6 +13,7 @@ import {
   SessionManager,
   SettingsManager,
   type AgentSession,
+  type CompactionSettings,
   type CreateAgentSessionResult,
   type ExtensionUIContext,
   type SessionStartEvent,
@@ -69,6 +70,7 @@ interface CapturedNotification {
 
 interface IntegrationSessionOptions {
   codexBaseUrl?: string;
+  compaction?: CompactionSettings;
   sessionManager?: SessionManager;
   sessionStartReason?: SessionStartEvent["reason"];
 }
@@ -141,6 +143,23 @@ function textResponseEvents(text: string, id = "resp_text"): SseEvent[] {
       },
     },
     responseCompleted(id),
+  ];
+}
+
+function contextOverflowResponseEvents(id = "resp_overflow"): SseEvent[] {
+  return [
+    { type: "response.created", response: { id } },
+    {
+      type: "response.failed",
+      response: {
+        id,
+        status: "failed",
+        error: {
+          code: "context_length_exceeded",
+          message: "Your input exceeds the context window of this model.",
+        },
+      },
+    },
   ];
 }
 
@@ -334,7 +353,7 @@ async function createIntegrationSession(
     transport: "sse",
     defaultThinkingLevel: "off",
     retry: { enabled: false, provider: { maxRetries: 0 } },
-    compaction: { enabled: false },
+    compaction: options.compaction ?? { enabled: false },
   });
   const resourceLoader = new DefaultResourceLoader({
     cwd,
@@ -598,6 +617,70 @@ void test("runs a real Pi prompt through fast Codex as priority while storing ca
   assert.equal(content.text, "fast ok");
   assertCanonicalAssistantMessages(session);
   assert.ok(!session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
+});
+
+void test("remaps fast context overflow errors and lets Pi compact and retry", async (t) => {
+  const server = await startCodexServer(t, [
+    { events: contextOverflowResponseEvents() },
+    { events: textResponseEvents("overflow summary", "resp_summary") },
+    { events: textResponseEvents("recovered after compaction", "resp_retry") },
+  ]);
+  const { session } = await createIntegrationSession(t, {
+    codexBaseUrl: server.baseUrl,
+    compaction: { enabled: true, keepRecentTokens: 20_000, reserveTokens: 16_384 },
+  });
+  const compactionEvents: Array<{
+    reason: string;
+    willRetry?: boolean;
+    errorMessage?: string | undefined;
+  }> = [];
+  session.subscribe((event) => {
+    if (event.type === "compaction_start") {
+      compactionEvents.push({ reason: event.reason });
+    }
+    if (event.type === "compaction_end") {
+      compactionEvents.push({
+        reason: event.reason,
+        willRetry: event.willRetry,
+        errorMessage: event.errorMessage,
+      });
+    }
+  });
+
+  await selectFastModel(session);
+  await session.prompt("overflow then recover", { expandPromptTemplates: false });
+
+  const modelRequests = server.requests.filter((request) => request.body.model === MODEL_ID);
+  assert.equal(modelRequests.length, 3);
+  assert.ok(modelRequests.every((request) => request.body.service_tier === "priority"));
+  assert.deepEqual(compactionEvents, [
+    { reason: "overflow" },
+    { reason: "overflow", willRetry: true, errorMessage: undefined },
+  ]);
+
+  const compactionEntries = session.sessionManager
+    .getBranch()
+    .filter((entry) => entry.type === "compaction");
+  assert.equal(compactionEntries.length, 1);
+
+  const messages = assistantMessages(session);
+  assert.equal(messages.length, 2);
+  const overflowError = messages[0];
+  const retrySuccess = messages[1];
+  assert.ok(overflowError);
+  assert.ok(retrySuccess);
+  assert.equal(overflowError.stopReason, "error");
+  assert.equal(overflowError.provider, FAST_PROVIDER);
+  assert.equal(overflowError.api, CODEX_API);
+  assert.match(overflowError.errorMessage ?? "", /exceeds the context window/i);
+  assert.equal(retrySuccess.stopReason, "stop");
+  assert.equal(retrySuccess.provider, CODEX_PROVIDER);
+  assert.equal(retrySuccess.api, CODEX_API);
+  const content = retrySuccess.content[0];
+  if (!content || content.type !== "text") {
+    assert.fail("Expected retry success to contain text");
+  }
+  assert.equal(content.text, "recovered after compaction");
 });
 
 void test("stores tool-calling fast replies canonically through the real Pi agent loop", async (t) => {
