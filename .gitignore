@@ -24,6 +24,7 @@ mise.local.toml
 # Markdown files
 *.md
 !README.md
+!CHANGELOG.md
 !AGENTS.md
 
 # Benchmarks

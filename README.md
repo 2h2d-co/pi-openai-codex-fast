@@ -72,6 +72,7 @@ This package publishes these project files explicitly:
 
 - `index.ts`
 - `README.md`
+- `CHANGELOG.md`
 - `LICENSE`
 
 Release helper:
