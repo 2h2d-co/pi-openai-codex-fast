@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test, type TestContext } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   AuthStorage,
   createAgentSession,
@@ -193,8 +193,13 @@ async function startCodexServer(
     const body = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
     requests.push({ method: req.method, url: req.url, headers: req.headers, body });
 
-    const batch = responseBatches[Math.min(requestIndex, responseBatches.length - 1)] ?? {};
-    requestIndex += 1;
+    const isModelRequest = typeof body.model === "string";
+    const batch = isModelRequest
+      ? (responseBatches[Math.min(requestIndex, responseBatches.length - 1)] ?? {})
+      : {};
+    if (isModelRequest) {
+      requestIndex += 1;
+    }
 
     res.writeHead(batch.status ?? 200, {
       "content-type": "text/event-stream",
@@ -222,15 +227,33 @@ async function startCodexServer(
   return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
-function pointBuiltInCodexAt(baseUrl: string, t: TestContext): void {
-  const models = getModels(CODEX_PROVIDER);
-  const previousBaseUrls: Array<[Model<typeof CODEX_API>, string]> = models.map((model) => [
-    model,
-    model.baseUrl,
-  ]);
-  for (const model of models) {
-    model.baseUrl = baseUrl;
+async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<void> {
+  const piAiModules: Array<{ getModels: typeof getModels }> = [{ getModels }];
+  const nestedPiAiPath = resolve(
+    rootDir,
+    "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js",
+  );
+
+  try {
+    const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
+      getModels?: typeof getModels;
+    };
+    if (nestedPiAi.getModels && nestedPiAi.getModels !== getModels) {
+      piAiModules.push({ getModels: nestedPiAi.getModels });
+    }
+  } catch {
+    // No nested Pi AI copy is installed in the older/deduped dependency layout.
   }
+
+  const previousBaseUrls: Array<[Model<typeof CODEX_API>, string]> = [];
+  for (const piAi of piAiModules) {
+    const models = piAi.getModels(CODEX_PROVIDER) as Model<typeof CODEX_API>[];
+    for (const model of models) {
+      previousBaseUrls.push([model, model.baseUrl]);
+      model.baseUrl = baseUrl;
+    }
+  }
+
   t.after(() => {
     for (const [model, previousBaseUrl] of previousBaseUrls) {
       model.baseUrl = previousBaseUrl;
@@ -302,7 +325,7 @@ async function createIntegrationSession(
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
   if (options.codexBaseUrl) {
-    pointBuiltInCodexAt(options.codexBaseUrl, t);
+    await pointBuiltInCodexAt(options.codexBaseUrl, t);
   }
 
   const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
