@@ -32,6 +32,8 @@ const publishArgs = ["publish", "--tag", tag, ...extraArgs];
 
 if (!execute) {
   publishArgs.push("--dry-run");
+} else {
+  assertReleaseGitState(version);
 }
 
 console.log(
@@ -51,6 +53,93 @@ if (result.error) {
 }
 
 process.exit(result.status ?? 1);
+
+function assertReleaseGitState(version: string): void {
+  const releaseTag = `v${version}`;
+  const insideWorkTree = runGit(["rev-parse", "--is-inside-work-tree"]);
+  if (insideWorkTree !== "true") {
+    throw new Error("Refusing to publish outside of a Git work tree.");
+  }
+
+  const status = runGit(["status", "--porcelain"]);
+  if (status.length > 0) {
+    throw new Error(`Refusing to publish with uncommitted changes:\n${status}`);
+  }
+
+  const head = runGit(["rev-parse", "HEAD"]);
+  const branch = runGit(["branch", "--show-current"]);
+  if (!branch) {
+    throw new Error("Refusing to publish from a detached HEAD.");
+  }
+
+  const remote = runGit(["config", `branch.${branch}.remote`]);
+  if (!remote) {
+    throw new Error(`Refusing to publish because branch "${branch}" has no upstream remote.`);
+  }
+
+  const upstream = runGit(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  runGit(["fetch", "--quiet", remote]);
+  if (!gitSucceeds(["merge-base", "--is-ancestor", head, upstream])) {
+    throw new Error(
+      `Refusing to publish because HEAD is not pushed to upstream "${upstream}". Push the release commit first.`,
+    );
+  }
+
+  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", `refs/tags/${releaseTag}`])) {
+    throw new Error(`Refusing to publish because local tag "${releaseTag}" does not exist.`);
+  }
+
+  const tagCommit = runGit(["rev-list", "-n", "1", releaseTag]);
+  if (tagCommit !== head) {
+    throw new Error(`Refusing to publish because tag "${releaseTag}" does not point at HEAD.`);
+  }
+
+  const localTagObject = runGit(["rev-parse", `refs/tags/${releaseTag}`]);
+  const remoteTagObject = getRemoteTagObject(remote, releaseTag);
+  if (remoteTagObject !== localTagObject) {
+    throw new Error(
+      `Refusing to publish because tag "${releaseTag}" is not pushed to remote "${remote}". Push the release tag first.`,
+    );
+  }
+}
+
+function getRemoteTagObject(remote: string, releaseTag: string): string | undefined {
+  const output = runGit(["ls-remote", "--tags", remote, `refs/tags/${releaseTag}`]);
+  for (const line of output.split("\n")) {
+    const [object, ref] = line.trim().split(/\s+/);
+    if (object && ref === `refs/tags/${releaseTag}`) {
+      return object;
+    }
+  }
+  return undefined;
+}
+
+function runGit(args: string[]): string {
+  const result = spawnSync("git", args, {
+    encoding: "utf8",
+    shell: false,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    const stderr = result.stderr.trim();
+    throw new Error(`git ${args.join(" ")} failed${stderr ? `: ${stderr}` : ""}`);
+  }
+  return result.stdout.trim();
+}
+
+function gitSucceeds(args: string[]): boolean {
+  const result = spawnSync("git", args, {
+    stdio: "ignore",
+    shell: false,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  return result.status === 0;
+}
 
 function deriveTag(prerelease: string, fullVersion: string) {
   const firstIdentifier = prerelease.split(".")[0]?.toLowerCase();

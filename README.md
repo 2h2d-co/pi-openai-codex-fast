@@ -83,3 +83,5 @@ npm run release:publish -- --execute
 ```
 
 `npm run release:publish` runs `npm run check` first and defaults to an npm dry-run. Pass `--execute` to perform the real publish.
+
+The publish helper does not create commits or tags. A real publish requires a clean Git worktree, the release commit pushed to the branch upstream, and a pushed `vX.Y.Z` tag pointing at the release commit.
