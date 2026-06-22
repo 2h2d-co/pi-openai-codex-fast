@@ -1,6 +1,6 @@
 {
   "name": "pi-openai-codex-fast",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Pi package that adds an openai-codex-fast provider backed by openai-codex with priority service tier",
   "keywords": [
     "pi-package"

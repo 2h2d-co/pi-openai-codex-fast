@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.4 - 2026-06-22
 
 - Align the package Node engine with Pi's `>=22.19.0` runtime range.
 - Keep publishing the TypeScript extension entrypoint while testing both direct TypeScript loading and the built JavaScript artifact.
