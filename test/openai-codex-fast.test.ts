@@ -21,7 +21,7 @@ import {
 import { getModels, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, "index.ts");
+const extensionPath = resolve(rootDir, process.env.TEST_EXTENSION_PATH ?? "index.ts");
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -627,7 +627,8 @@ void test("remaps fast context overflow errors and lets Pi compact and retry", a
   ]);
   const { session } = await createIntegrationSession(t, {
     codexBaseUrl: server.baseUrl,
-    compaction: { enabled: true, keepRecentTokens: 20_000, reserveTokens: 16_384 },
+    // Force a compaction boundary even though this fixture has a tiny history.
+    compaction: { enabled: true, keepRecentTokens: 0, reserveTokens: 16_384 },
   });
   const compactionEvents: Array<{
     reason: string;

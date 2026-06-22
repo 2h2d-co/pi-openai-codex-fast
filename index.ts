@@ -24,25 +24,6 @@ const OPENAI_CODEX_PROVIDER = "openai-codex";
 const PLACEHOLDER_API_KEY = "__openai_codex_fast_reuses_openai_codex_auth__";
 const OPENAI_CODEX_FAST_MODEL_IDS = new Set(["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]);
 
-const OPENAI_CODEX_MODELS = getModels(OPENAI_CODEX_PROVIDER);
-const OPENAI_CODEX_FAST_MODELS = OPENAI_CODEX_MODELS.filter((model) =>
-  OPENAI_CODEX_FAST_MODEL_IDS.has(model.id),
-).map(
-  (model): ProviderModelConfig => ({
-    id: model.id,
-    name: model.name,
-    baseUrl: model.baseUrl,
-    reasoning: model.reasoning,
-    ...(model.thinkingLevelMap !== undefined ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
-    input: model.input,
-    cost: model.cost,
-    contextWindow: model.contextWindow,
-    maxTokens: model.maxTokens,
-    ...(model.headers !== undefined ? { headers: model.headers } : {}),
-    ...(model.compat !== undefined ? { compat: model.compat } : {}),
-  }),
-);
-
 type ExtensionDiagnostic = {
   type: "warning" | "error";
   code: "auth-failed" | "missing-openai-codex-auth" | "no-fast-models" | "no-model-base-url";
@@ -50,8 +31,8 @@ type ExtensionDiagnostic = {
 };
 
 type Result<T> = { ok: true; value: T } | { ok: false; diagnostic: ExtensionDiagnostic };
-
-const authStorage = AuthStorage.create();
+type AuthStorageInstance = ReturnType<typeof AuthStorage.create>;
+type OpenAICodexApi = typeof OPENAI_CODEX_API;
 
 function authFailedDiagnostic(reason: string): ExtensionDiagnostic {
   return {
@@ -61,7 +42,7 @@ function authFailedDiagnostic(reason: string): ExtensionDiagnostic {
   };
 }
 
-async function getOpenAICodexAuth(): Promise<Result<string>> {
+async function getOpenAICodexAuth(authStorage: AuthStorageInstance): Promise<Result<string>> {
   try {
     authStorage.drainErrors();
     authStorage.reload();
@@ -97,8 +78,34 @@ async function getOpenAICodexAuth(): Promise<Result<string>> {
   }
 }
 
-function getFastProviderBaseUrl(): Result<string> {
-  if (OPENAI_CODEX_FAST_MODELS.length === 0) {
+function getOpenAICodexFastModels(
+  openAICodexModels: readonly Model<OpenAICodexApi>[],
+): ProviderModelConfig[] {
+  return openAICodexModels
+    .filter((model) => OPENAI_CODEX_FAST_MODEL_IDS.has(model.id))
+    .map(
+      (model): ProviderModelConfig => ({
+        id: model.id,
+        name: model.name,
+        baseUrl: model.baseUrl,
+        reasoning: model.reasoning,
+        ...(model.thinkingLevelMap !== undefined
+          ? { thinkingLevelMap: model.thinkingLevelMap }
+          : {}),
+        input: model.input,
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+        ...(model.headers !== undefined ? { headers: model.headers } : {}),
+        ...(model.compat !== undefined ? { compat: model.compat } : {}),
+      }),
+    );
+}
+
+function getFastProviderBaseUrl(
+  openAICodexFastModels: readonly ProviderModelConfig[],
+): Result<string> {
+  if (openAICodexFastModels.length === 0) {
     return {
       ok: false,
       diagnostic: {
@@ -109,7 +116,7 @@ function getFastProviderBaseUrl(): Result<string> {
     };
   }
 
-  const baseUrl = OPENAI_CODEX_FAST_MODELS.find((model) => model.baseUrl)?.baseUrl;
+  const baseUrl = openAICodexFastModels.find((model) => model.baseUrl)?.baseUrl;
   if (!baseUrl) {
     return {
       ok: false,
@@ -157,6 +164,8 @@ function endWithCanonicalError(
 }
 
 function streamSimpleOpenAICodexFast(
+  authStorage: AuthStorageInstance,
+  openAICodexModels: readonly Model<OpenAICodexApi>[],
   model: Model<Api>,
   context: Context,
   options?: SimpleStreamOptions,
@@ -165,7 +174,7 @@ function streamSimpleOpenAICodexFast(
 
   void (async () => {
     try {
-      const codexModel = OPENAI_CODEX_MODELS.find((m) => m.id === model.id);
+      const codexModel = openAICodexModels.find((m) => m.id === model.id);
       if (!codexModel) {
         endWithCanonicalError(
           outer,
@@ -176,7 +185,7 @@ function streamSimpleOpenAICodexFast(
         return;
       }
 
-      const auth = await getOpenAICodexAuth();
+      const auth = await getOpenAICodexAuth(authStorage);
       if (!auth.ok) {
         endWithCanonicalError(outer, model.id, auth.diagnostic.message, options);
         return;
@@ -222,6 +231,9 @@ function streamSimpleOpenAICodexFast(
 }
 
 export default async function (pi: ExtensionAPI) {
+  const authStorage = AuthStorage.create();
+  const openAICodexModels = getModels(OPENAI_CODEX_PROVIDER);
+  const openAICodexFastModels = getOpenAICodexFastModels(openAICodexModels);
   const diagnostics: ExtensionDiagnostic[] = [];
   let providerRegistered = false;
 
@@ -230,12 +242,12 @@ export default async function (pi: ExtensionAPI) {
       return;
     }
 
-    const auth = await getOpenAICodexAuth();
+    const auth = await getOpenAICodexAuth(authStorage);
     if (!auth.ok) {
       diagnostics.push(auth.diagnostic);
     }
 
-    const baseUrl = getFastProviderBaseUrl();
+    const baseUrl = getFastProviderBaseUrl(openAICodexFastModels);
     if (!baseUrl.ok) {
       diagnostics.push(baseUrl.diagnostic);
     }
@@ -249,8 +261,15 @@ export default async function (pi: ExtensionAPI) {
       baseUrl: baseUrl.value,
       apiKey: PLACEHOLDER_API_KEY,
       api: OPENAI_CODEX_FAST_API,
-      models: OPENAI_CODEX_FAST_MODELS,
-      streamSimple: streamSimpleOpenAICodexFast,
+      models: openAICodexFastModels,
+      streamSimple: (model, context, options) =>
+        streamSimpleOpenAICodexFast(
+          authStorage,
+          openAICodexModels,
+          model,
+          context,
+          options,
+        ),
     });
     providerRegistered = true;
   }

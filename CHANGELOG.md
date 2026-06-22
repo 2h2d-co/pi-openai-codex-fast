@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Align the package Node engine with Pi's `>=22.19.0` runtime range.
+- Keep publishing the TypeScript extension entrypoint while testing both direct TypeScript loading and the built JavaScript artifact.
+- Harden extension instance state against module-loader caching.
+
 ## 0.0.3 - 2026-06-10
 
 - Fix Pi's context-overflow compact-and-retry recovery for `openai-codex-fast`.

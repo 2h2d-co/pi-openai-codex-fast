@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "module": "nodenext",
-    "target": "esnext",
-    "lib": ["ESNext"],
+    "target": "ES2023",
+    "lib": ["ES2023"],
     "types": ["node"],
     "noEmit": true,
     "allowImportingTsExtensions": true,

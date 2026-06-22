@@ -59,8 +59,11 @@ openai-codex-fast/gpt-5.5
 
 ```bash
 npm install
-npm test # typecheck + integration tests against real Pi runtime/local Codex server
+npm test # typecheck + integration tests for both direct TS loading and built JS
 npm run check
+npm run build
+npm run test:ts
+npm run test:js
 npm run lint
 npm run fmt
 npm run benchmark
@@ -68,12 +71,14 @@ npm run benchmark
 
 ## Packaging
 
-This package publishes these project files explicitly:
+This package publishes the TypeScript extension entrypoint and these project files explicitly:
 
 - `index.ts`
 - `README.md`
 - `CHANGELOG.md`
 - `LICENSE`
+
+The build output is a local test artifact for verifying the extension also works as native JavaScript; it is not published.
 
 Release helper:
 
@@ -82,6 +87,6 @@ npm run release:publish
 npm run release:publish -- --execute
 ```
 
-`npm run release:publish` runs `npm run check` first and defaults to an npm dry-run. Pass `--execute` to perform the real publish.
+`npm run release:publish` runs `npm test` first, then defaults to an npm dry-run. Pass `--execute` to perform the real publish.
 
 The publish helper does not create commits or tags. A real publish requires a clean Git worktree, the release commit pushed to the branch upstream, and a pushed `vX.Y.Z` tag pointing at the release commit.
