@@ -18,7 +18,12 @@ import {
   type ExtensionUIContext,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import { getModels, type Api, type AssistantMessage, type Model } from "@earendil-works/pi-ai";
+import {
+  getModels,
+  type Api,
+  type AssistantMessage,
+  type Model,
+} from "@earendil-works/pi-ai/compat";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, process.env.TEST_EXTENSION_PATH ?? "index.ts");
@@ -248,20 +253,28 @@ async function startCodexServer(
 
 async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<void> {
   const piAiModules: Array<{ getModels: typeof getModels }> = [{ getModels }];
-  const nestedPiAiPath = resolve(
-    rootDir,
-    "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js",
-  );
+  const nestedPiAiPaths = [
+    resolve(
+      rootDir,
+      "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/compat.js",
+    ),
+    resolve(
+      rootDir,
+      "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js",
+    ),
+  ];
 
-  try {
-    const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
-      getModels?: typeof getModels;
-    };
-    if (nestedPiAi.getModels && nestedPiAi.getModels !== getModels) {
-      piAiModules.push({ getModels: nestedPiAi.getModels });
+  for (const nestedPiAiPath of nestedPiAiPaths) {
+    try {
+      const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
+        getModels?: typeof getModels;
+      };
+      if (nestedPiAi.getModels && nestedPiAi.getModels !== getModels) {
+        piAiModules.push({ getModels: nestedPiAi.getModels });
+      }
+    } catch {
+      // No nested Pi AI copy is installed in this dependency layout.
     }
-  } catch {
-    // No nested Pi AI copy is installed in the older/deduped dependency layout.
   }
 
   const previousBaseUrls: Array<[Model<typeof CODEX_API>, string]> = [];

@@ -15,7 +15,7 @@ import {
   type Context,
   type Model,
   type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 
 const OPENAI_CODEX_FAST_API = "openai-codex-fast-responses";
 const OPENAI_CODEX_API = "openai-codex-responses";

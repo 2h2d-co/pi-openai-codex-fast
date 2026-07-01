@@ -39,8 +39,8 @@
     "release:publish": "npm test && node ./scripts/publish.ts"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.79.9",
-    "@earendil-works/pi-coding-agent": "0.79.9",
+    "@earendil-works/pi-ai": "0.80.3",
+    "@earendil-works/pi-coding-agent": "0.80.3",
     "@types/node": "22.20.0",
     "oxfmt": "0.55.0",
     "oxlint": "1.70.0",
