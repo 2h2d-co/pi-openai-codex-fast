@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.0.5 - 2026-07-01
+
+- Add Pi 0.80.x compatibility by importing legacy Pi AI helpers from the compat entrypoint.
+- Update Pi development dependencies to 0.80.3 and test against the 0.80.x package layout.
+
 ## 0.0.4 - 2026-06-22
 
 - Align the package Node engine with Pi's `>=22.19.0` runtime range.
