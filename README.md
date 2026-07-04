@@ -66,6 +66,7 @@ npm run test:ts
 npm run test:js
 npm run lint
 npm run fmt
+mise run lint:actions
 npm run benchmark
 ```
 
@@ -80,13 +81,10 @@ This package publishes the TypeScript extension entrypoint and these project fil
 
 The build output is a local test artifact for verifying the extension also works as native JavaScript; it is not published.
 
-Release helper:
+Release flow:
 
-```bash
-npm run release:publish
-npm run release:publish -- --execute
-```
-
-`npm run release:publish` runs `npm test` first, then defaults to an npm dry-run. Pass `--execute` to perform the real publish.
-
-The publish helper does not create commits or tags. A real publish requires a clean Git worktree, the release commit pushed to the branch upstream, and a pushed `vX.Y.Z` tag pointing at the release commit.
+1. Create a release commit named `release: vX.Y.Z`.
+2. Tag that commit as `vX.Y.Z`.
+3. Push `main` and the tag to GitHub.
+4. GitHub Actions stages the package on npm via trusted publishing.
+5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
