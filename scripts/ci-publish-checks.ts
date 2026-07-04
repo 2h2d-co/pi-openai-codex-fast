@@ -26,7 +26,6 @@ writeGithubOutput("npm_tag", npmTag);
 writeGithubOutput("package_name", packageName);
 writeGithubOutput("package_version", version);
 writeGithubOutput("release_tag", `v${version}`);
-writeGithubOutput("is_prerelease", version.includes("-") ? "true" : "false");
 
 console.log(`Validated CI release for ${packageName}@${version} with npm dist-tag "${npmTag}".`);
 

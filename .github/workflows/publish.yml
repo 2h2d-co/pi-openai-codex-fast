@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
-      contents: write
+      contents: read
       id-token: write
 
     steps:
@@ -45,67 +45,8 @@ jobs:
         id: release
         run: node ./scripts/ci-publish-checks.ts
 
-      - name: Pack package
-        id: pack
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm pack --json --allow-directory=all > npm-pack.json
-          package_tarball="$(node -e "const [pack] = JSON.parse(require('node:fs').readFileSync('npm-pack.json', 'utf8')); if (!pack?.filename) throw new Error('npm pack did not report a filename'); console.log(pack.filename)")"
-          sha256="$(node -e "const fs = require('node:fs'); const crypto = require('node:crypto'); console.log(crypto.createHash('sha256').update(fs.readFileSync(process.argv[1])).digest('hex'))" "$package_tarball")"
-          printf '%s  %s\n' "$sha256" "$package_tarball" > SHA256SUMS
-          {
-            echo "package_tarball=$package_tarball"
-            echo "sha256=$sha256"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Stage package on npm
-        id: npm-stage
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm stage publish "$PACKAGE_TARBALL" --tag "$NPM_DIST_TAG" --allow-directory=all --provenance 2>&1 | tee npm-stage-publish.log
-          stage_id="$(node -e "const log = require('node:fs').readFileSync('npm-stage-publish.log', 'utf8'); const match = log.match(/\\(staged with id ([^)]+)\\)/); if (match) console.log(match[1])")"
-          if [ -n "$stage_id" ]; then
-            echo "stage_id=$stage_id" >> "$GITHUB_OUTPUT"
-          fi
+        run: npm stage publish --tag "$NPM_DIST_TAG" --allow-directory=all --provenance
         env:
           NPM_CONFIG_ALLOW_DIRECTORY: all
           NPM_DIST_TAG: "${{ steps.release.outputs.npm_tag }}"
-          PACKAGE_TARBALL: "${{ steps.pack.outputs.package_tarball }}"
-
-      - name: Create GitHub release
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -n "$NPM_STAGE_ID" ]; then
-            stage_line="npm stage id: \`$NPM_STAGE_ID\`"
-          else
-            stage_line="npm stage id: see the workflow log or npm staged packages."
-          fi
-
-          cat > RELEASE_NOTES.md <<EOF
-          Staged npm package: \`$PACKAGE_NAME@$PACKAGE_VERSION\`
-          npm dist-tag: \`$NPM_DIST_TAG\`
-          $stage_line
-
-          Assets:
-          - \`$PACKAGE_TARBALL\`: exact tarball submitted to \`npm stage publish --provenance\`
-          - \`SHA256SUMS\`: SHA-256 checksum for the tarball
-          EOF
-
-          args=(--verify-tag --title "$RELEASE_TAG" --notes-file RELEASE_NOTES.md)
-          if [ "$IS_PRERELEASE" = "true" ]; then
-            args+=(--prerelease --latest=false)
-          fi
-
-          gh release create "$RELEASE_TAG" "${args[@]}" "$PACKAGE_TARBALL" SHA256SUMS
-        env:
-          GH_TOKEN: "${{ github.token }}"
-          IS_PRERELEASE: "${{ steps.release.outputs.is_prerelease }}"
-          NPM_DIST_TAG: "${{ steps.release.outputs.npm_tag }}"
-          NPM_STAGE_ID: "${{ steps.npm-stage.outputs.stage_id }}"
-          PACKAGE_NAME: "${{ steps.release.outputs.package_name }}"
-          PACKAGE_TARBALL: "${{ steps.pack.outputs.package_tarball }}"
-          PACKAGE_VERSION: "${{ steps.release.outputs.package_version }}"
-          RELEASE_TAG: "${{ steps.release.outputs.release_tag }}"
