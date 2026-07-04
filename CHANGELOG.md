@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Change the Pi extension entrypoint path so Pi displays the extension as `openai-codex-fast` while the npm package remains `pi-openai-codex-fast`.
+
 ## 0.0.5 - 2026-07-01
 
 - Add Pi 0.80.x compatibility by importing legacy Pi AI helpers from the compat entrypoint.

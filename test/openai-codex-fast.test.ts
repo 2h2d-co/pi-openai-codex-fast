@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -26,7 +26,10 @@ import {
 } from "@earendil-works/pi-ai/compat";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, process.env.TEST_EXTENSION_PATH ?? "index.ts");
+const extensionPath = resolve(
+  rootDir,
+  process.env.TEST_EXTENSION_PATH ?? "extensions/openai-codex-fast/index.ts",
+);
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -432,6 +435,16 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
     assert.equal(message.api, CODEX_API);
   }
 }
+
+void test("package manifest keeps npm package name while loading the display-named extension path", async () => {
+  const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8")) as {
+    name?: string;
+    pi?: { extensions?: string[] };
+  };
+
+  assert.equal(packageJson.name, "pi-openai-codex-fast");
+  assert.deepEqual(packageJson.pi?.extensions, ["./extensions/openai-codex-fast/index.ts"]);
+});
 
 void test("loads extension disabled when built-in Codex auth is missing", async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-auth-"));

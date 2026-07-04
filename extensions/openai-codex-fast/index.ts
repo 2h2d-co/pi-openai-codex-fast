@@ -263,13 +263,7 @@ export default async function (pi: ExtensionAPI) {
       api: OPENAI_CODEX_FAST_API,
       models: openAICodexFastModels,
       streamSimple: (model, context, options) =>
-        streamSimpleOpenAICodexFast(
-          authStorage,
-          openAICodexModels,
-          model,
-          context,
-          options,
-        ),
+        streamSimpleOpenAICodexFast(authStorage, openAICodexModels, model, context, options),
     });
     providerRegistered = true;
   }

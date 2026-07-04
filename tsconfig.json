@@ -18,5 +18,5 @@
     "moduleDetection": "force",
     "skipLibCheck": true
   },
-  "include": ["index.ts", "scripts", "benchmarks", "test"]
+  "include": ["extensions", "scripts", "benchmarks", "test"]
 }
