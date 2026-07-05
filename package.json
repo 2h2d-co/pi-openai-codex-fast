@@ -35,7 +35,8 @@
     "fmt": "oxfmt",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
-    "benchmark": "node ./benchmarks/run.ts"
+    "benchmark": "node ./benchmarks/run.ts",
+    "publish:prerelease": "npm test && node ./scripts/publish-prerelease.ts"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.80.3",
