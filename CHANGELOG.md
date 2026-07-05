@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Revert the extension entrypoint to top-level `index.ts` so Pi labels the installed package as `pi-openai-codex-fast`.
+
 ## 0.0.6 - 2026-07-04
 
 - Change the Pi extension entrypoint path so Pi displays the extension as `openai-codex-fast` while the npm package remains `pi-openai-codex-fast`.

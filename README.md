@@ -74,7 +74,7 @@ npm run benchmark
 
 This package publishes the TypeScript extension entrypoint and these project files explicitly:
 
-- `extensions/openai-codex-fast/index.ts`
+- `index.ts`
 - `README.md`
 - `CHANGELOG.md`
 - `LICENSE`

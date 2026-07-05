@@ -20,7 +20,7 @@
     "url": "git+https://github.com/2h2d-co/pi-openai-codex-fast.git"
   },
   "files": [
-    "extensions/openai-codex-fast/index.ts",
+    "index.ts",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"
@@ -31,7 +31,7 @@
     "check": "tsc -p tsconfig.json",
     "test": "npm run check && npm run test:ts && npm run test:js",
     "test:ts": "node --test --test-concurrency=1 test/*.test.ts",
-    "test:js": "npm run build && TEST_EXTENSION_PATH=dist/extensions/openai-codex-fast/index.js node --test --test-concurrency=1 test/*.test.ts",
+    "test:js": "npm run build && TEST_EXTENSION_PATH=dist/index.js node --test --test-concurrency=1 test/*.test.ts",
     "fmt": "oxfmt",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
@@ -55,7 +55,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/openai-codex-fast/index.ts"
+      "./index.ts"
     ]
   }
 }

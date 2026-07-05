@@ -26,10 +26,7 @@ import {
 } from "@earendil-works/pi-ai/compat";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(
-  rootDir,
-  process.env.TEST_EXTENSION_PATH ?? "extensions/openai-codex-fast/index.ts",
-);
+const extensionPath = resolve(rootDir, process.env.TEST_EXTENSION_PATH ?? "index.ts");
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -436,14 +433,14 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
   }
 }
 
-void test("package manifest keeps npm package name while loading the display-named extension path", async () => {
+void test("package manifest keeps npm package name while loading the top-level extension path", async () => {
   const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8")) as {
     name?: string;
     pi?: { extensions?: string[] };
   };
 
   assert.equal(packageJson.name, "pi-openai-codex-fast");
-  assert.deepEqual(packageJson.pi?.extensions, ["./extensions/openai-codex-fast/index.ts"]);
+  assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 });
 
 void test("loads extension disabled when built-in Codex auth is missing", async (t) => {

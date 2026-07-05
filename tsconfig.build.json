@@ -7,5 +7,5 @@
     "rootDir": ".",
     "sourceMap": false
   },
-  "include": ["extensions/openai-codex-fast/index.ts"]
+  "include": ["index.ts"]
 }
