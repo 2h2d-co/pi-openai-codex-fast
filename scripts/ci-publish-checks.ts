@@ -28,6 +28,7 @@ console.log(`Validated CI release for ${packageName}@${version} with npm dist-ta
 
 function assertCiReleaseGitState(version: string): void {
   const releaseTag = `v${version}`;
+  const releaseTagRef = `refs/tags/${releaseTag}`;
   const eventName = getRequiredEnv("GITHUB_EVENT_NAME");
   const ref = getRequiredEnv("GITHUB_REF");
   const sha = getRequiredEnv("GITHUB_SHA");
@@ -38,8 +39,10 @@ function assertCiReleaseGitState(version: string): void {
   if (eventName !== "push") {
     throw new Error(`Refusing release for event "${eventName}".`);
   }
-  if (ref !== "refs/heads/main") {
-    throw new Error(`Refusing release from ref "${ref}".`);
+  if (ref !== releaseTagRef) {
+    throw new Error(
+      `Refusing release from ref "${ref}"; expected "${releaseTagRef}" for package version "${version}".`,
+    );
   }
 
   const insideWorkTree = runGit(["rev-parse", "--is-inside-work-tree"]);
@@ -47,26 +50,33 @@ function assertCiReleaseGitState(version: string): void {
     throw new Error("Refusing release outside of a Git work tree.");
   }
 
-  const head = runGit(["rev-parse", "HEAD"]);
-  if (sha !== head) {
-    throw new Error(`Refusing release because GITHUB_SHA does not match HEAD (${head}).`);
-  }
-
-  const subject = runGit(["log", "-1", "--pretty=%s"]);
-  const expectedSubject = `release: ${releaseTag}`;
-  if (subject !== expectedSubject) {
-    throw new Error(
-      `Refusing release because HEAD subject is "${subject}", not "${expectedSubject}".`,
-    );
-  }
-
-  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", `refs/tags/${releaseTag}`])) {
+  if (!gitSucceeds(["rev-parse", "--verify", "--quiet", `${releaseTagRef}^{commit}`])) {
     throw new Error(`Refusing release because tag "${releaseTag}" does not exist.`);
   }
 
-  const tagCommit = runGit(["rev-list", "-n", "1", releaseTag]);
+  const tagCommit = runGit(["rev-parse", `${releaseTagRef}^{commit}`]);
+  const head = runGit(["rev-parse", "HEAD"]);
   if (tagCommit !== head) {
     throw new Error(`Refusing release because tag "${releaseTag}" does not point at HEAD.`);
+  }
+
+  const eventCommit = runGit(["rev-parse", `${sha}^{commit}`]);
+  if (eventCommit !== tagCommit) {
+    throw new Error(`Refusing release because GITHUB_SHA does not match tag "${releaseTag}".`);
+  }
+
+  const subject = runGit(["log", "-1", "--pretty=%s", tagCommit]);
+  const expectedSubject = `release: ${releaseTag}`;
+  if (subject !== expectedSubject) {
+    throw new Error(
+      `Refusing release because tag "${releaseTag}" points to commit with subject "${subject}", not "${expectedSubject}".`,
+    );
+  }
+
+  if (!gitSucceeds(["merge-base", "--is-ancestor", tagCommit, "origin/main"])) {
+    throw new Error(
+      `Refusing release because tag "${releaseTag}" does not point to a commit on origin/main.`,
+    );
   }
 }
 

@@ -86,5 +86,5 @@ Release flow:
 1. Create a release commit named `release: vX.Y.Z`.
 2. Tag that commit as `vX.Y.Z`.
 3. Push `main` and the tag to GitHub.
-4. GitHub Actions stages the package on npm via trusted publishing with npm provenance.
+4. The tag push triggers GitHub Actions to stage the package on npm via trusted publishing with npm provenance.
 5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
