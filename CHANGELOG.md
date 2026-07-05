@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.7 - 2026-07-05
+
 - Revert the extension entrypoint to top-level `index.ts` so Pi labels the installed package as `pi-openai-codex-fast`.
 
 ## 0.0.6 - 2026-07-04
