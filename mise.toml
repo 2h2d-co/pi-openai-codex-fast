@@ -24,8 +24,13 @@ if [ ! -d .github/workflows ]; then
   exit 0
 fi
 
-actionlint
-zizmor .github/workflows
+actionlint_status=0
+actionlint || actionlint_status=$?
+if [ "$actionlint_status" -ne 0 ]; then
+  exit "$actionlint_status"
+fi
+echo "actionlint found no issues."
+zizmor -p .github/workflows
 """
 
 [tasks.benchmark]
