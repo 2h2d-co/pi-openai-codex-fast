@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.8 - 2026-07-10
+
 - Add priority-tier Codex requests for `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`.
 - Add per-model low- and medium-thinking benchmarks for GPT-5.6 Terra and Sol.
 - Update Pi development dependencies to 0.80.6.
