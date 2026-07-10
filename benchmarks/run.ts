@@ -122,18 +122,27 @@ type Report = {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT = join(__dirname, "..");
-const MODEL_ID = process.env.MODEL_ID ?? "gpt-5.5";
-const NORMAL_MODEL = `openai-codex/${MODEL_ID}`;
-const FAST_MODEL = `openai-codex-fast/${MODEL_ID}`;
+const DEFAULT_MODEL_IDS = ["gpt-5.6-terra", "gpt-5.6-sol"];
+
+function parseModelIds(args: string[]): string[] {
+  if (args.length === 0) return DEFAULT_MODEL_IDS;
+  if (args.length === 1 && !args[0]!.startsWith("-")) return [args[0]!];
+  if (args.length === 2 && args[0] === "--model" && args[1]) return [args[1]];
+  if (args.length === 1 && args[0]!.startsWith("--model=")) {
+    const modelId = args[0]!.slice("--model=".length);
+    if (modelId) return [modelId];
+  }
+  throw new Error("Usage: npm run benchmark --model <model-id>");
+}
+
+const MODEL_IDS = parseModelIds(process.argv.slice(2));
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS ?? "300000");
-const RESULTS_PATH = join(__dirname, "results.json");
-const SUMMARY_PATH = join(__dirname, "summary.md");
 const BASE_PRICING = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 };
 const SYSTEM_PROMPT =
   "You are a deterministic sorter. Obey the requested output format exactly and provide no commentary.";
 const ITEM_COUNT = Number(process.env.ITEM_COUNT ?? "200");
 const TURNS_PER_LEVEL = Number(process.env.TURNS_PER_LEVEL ?? "2");
-const LEVELS = (process.env.LEVELS ?? "off,minimal,low,medium,high,xhigh")
+const LEVELS = (process.env.LEVELS ?? "low,medium")
   .split(",")
   .map((level) => level.trim())
   .filter(Boolean);
@@ -416,8 +425,11 @@ function runPiOnce(
   });
 }
 
-async function run(mode: Mode, benchmarkCases: BenchmarkCase[]): Promise<ModeReport> {
-  const model = mode === "normal" ? NORMAL_MODEL : FAST_MODEL;
+async function run(
+  mode: Mode,
+  model: string,
+  benchmarkCases: BenchmarkCase[],
+): Promise<ModeReport> {
   const results: BenchmarkResult[] = [];
   console.log(`\n${mode}: starting ${benchmarkCases.length * TURNS_PER_LEVEL} turns`);
 
@@ -567,25 +579,16 @@ function buildMarkdownSummary(report: Report): string {
   return `${lines.join("\n")}\n`;
 }
 
-async function main(): Promise<void> {
-  installPiWrapper();
-  console.log(`Normal model: ${NORMAL_MODEL}`);
-  console.log(`Fast model:   ${FAST_MODEL}`);
-  console.log(`Turns per thinking level: ${TURNS_PER_LEVEL}`);
-  console.log(`Thinking schedule per pass: ${LEVELS.join(", ")}`);
+async function benchmarkModel(modelId: string, benchmarkCases: BenchmarkCase[]): Promise<void> {
+  const normalModel = `openai-codex/${modelId}`;
+  const fastModel = `openai-codex-fast/${modelId}`;
+  console.log(`\nBenchmarking ${modelId}`);
+  console.log(`Normal model: ${normalModel}`);
+  console.log(`Fast model:   ${fastModel}`);
 
-  const benchmarkCases = LEVELS.map(
-    (level): BenchmarkCase => ({
-      name: level,
-      itemCount: ITEM_COUNT,
-      turns: TURNS_PER_LEVEL,
-      thinkingLevel: level,
-      systemPrompt: SYSTEM_PROMPT,
-    }),
-  );
   const [normalRunResult, fastRunResult] = await Promise.allSettled([
-    run("normal", benchmarkCases),
-    run("fast", benchmarkCases),
+    run("normal", normalModel, benchmarkCases),
+    run("fast", fastModel, benchmarkCases),
   ]);
 
   if (normalRunResult.status === "rejected") throw normalRunResult.reason;
@@ -603,20 +606,43 @@ async function main(): Promise<void> {
   const report: Report = {
     createdAt: new Date().toISOString(),
     benchmarkTarget: "Pi CLI end-to-end latency, including process startup and JSON streaming",
-    normalModel: NORMAL_MODEL,
-    fastModel: FAST_MODEL,
+    normalModel,
+    fastModel,
     levels: [...LEVELS],
     turnsPerLevel: TURNS_PER_LEVEL,
     runs: { normal: normalRun, fast: fastRun },
     cases: caseReports,
     summary: summarizeAggregate(normalRun.results, fastRun.results, allTurns),
   };
+  const resultsPath = join(__dirname, `results.${modelId}.json`);
+  const summaryPath = join(__dirname, `summary.${modelId}.md`);
 
-  await writeFile(RESULTS_PATH, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  await writeFile(SUMMARY_PATH, buildMarkdownSummary(report), "utf8");
+  await writeFile(resultsPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  await writeFile(summaryPath, buildMarkdownSummary(report), "utf8");
 
-  console.log(`\nSaved raw results to ${RESULTS_PATH}`);
-  console.log(`Saved summary to ${SUMMARY_PATH}`);
+  console.log(`\nSaved raw results to ${resultsPath}`);
+  console.log(`Saved summary to ${summaryPath}`);
+}
+
+async function main(): Promise<void> {
+  installPiWrapper();
+  console.log(`Models: ${MODEL_IDS.join(", ")}`);
+  console.log(`Turns per thinking level: ${TURNS_PER_LEVEL}`);
+  console.log(`Thinking schedule per pass: ${LEVELS.join(", ")}`);
+
+  const benchmarkCases = LEVELS.map(
+    (level): BenchmarkCase => ({
+      name: level,
+      itemCount: ITEM_COUNT,
+      turns: TURNS_PER_LEVEL,
+      thinkingLevel: level,
+      systemPrompt: SYSTEM_PROMPT,
+    }),
+  );
+
+  for (const modelId of MODEL_IDS) {
+    await benchmarkModel(modelId, benchmarkCases);
+  }
 }
 
 main()
