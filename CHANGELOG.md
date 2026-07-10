@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add priority-tier Codex requests for `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`.
+- Update Pi development dependencies to 0.80.6.
+
 ## 0.0.7 - 2026-07-05
 
 - Revert the extension entrypoint to top-level `index.ts` so Pi labels the installed package as `pi-openai-codex-fast`.

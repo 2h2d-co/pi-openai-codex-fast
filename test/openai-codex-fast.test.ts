@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test, type TestContext } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { zstdDecompressSync } from "node:zlib";
 import {
   AuthStorage,
   createAgentSession,
@@ -33,7 +34,14 @@ const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
-const FAST_MODEL_IDS = ["gpt-5.4", "gpt-5.4-mini", "gpt-5.5"];
+const FAST_MODEL_IDS = [
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.5",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+];
 const SESSION_START_REASONS: SessionStartEvent["reason"][] = [
   "startup",
   "reload",
@@ -209,11 +217,20 @@ async function startCodexServer(
   const requests: CapturedRequest[] = [];
   let requestIndex = 0;
   const server = createServer(async (req, res) => {
-    let rawBody = "";
+    const bodyChunks: Buffer[] = [];
     for await (const chunk of req) {
-      rawBody += chunk;
+      bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
 
+    const bodyBuffer = Buffer.concat(bodyChunks);
+    const contentEncoding = req.headers["content-encoding"];
+    const contentEncodings = (Array.isArray(contentEncoding) ? contentEncoding : [contentEncoding])
+      .filter((encoding): encoding is string => encoding !== undefined)
+      .flatMap((encoding) => encoding.split(","))
+      .map((encoding) => encoding.trim().toLowerCase());
+    const rawBody = contentEncodings.includes("zstd")
+      ? zstdDecompressSync(bodyBuffer).toString("utf8")
+      : bodyBuffer.toString("utf8");
     const body = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
     requests.push({ method: req.method, url: req.url, headers: req.headers, body });
 
@@ -644,13 +661,14 @@ void test("runs a real Pi prompt through fast Codex as priority while storing ca
 
 void test("remaps fast context overflow errors and lets Pi compact and retry", async (t) => {
   const server = await startCodexServer(t, [
+    { events: textResponseEvents("seed ok", "resp_seed") },
     { events: contextOverflowResponseEvents() },
     { events: textResponseEvents("overflow summary", "resp_summary") },
     { events: textResponseEvents("recovered after compaction", "resp_retry") },
   ]);
   const { session } = await createIntegrationSession(t, {
     codexBaseUrl: server.baseUrl,
-    // Force a compaction boundary even though this fixture has a tiny history.
+    // Keep no recent history so the seed exchange is summarized before retrying.
     compaction: { enabled: true, keepRecentTokens: 0, reserveTokens: 16_384 },
   });
   const compactionEvents: Array<{
@@ -672,10 +690,11 @@ void test("remaps fast context overflow errors and lets Pi compact and retry", a
   });
 
   await selectFastModel(session);
+  await session.prompt("seed history", { expandPromptTemplates: false });
   await session.prompt("overflow then recover", { expandPromptTemplates: false });
 
   const modelRequests = server.requests.filter((request) => request.body.model === MODEL_ID);
-  assert.equal(modelRequests.length, 3);
+  assert.equal(modelRequests.length, 4);
   assert.ok(modelRequests.every((request) => request.body.service_tier === "priority"));
   assert.deepEqual(compactionEvents, [
     { reason: "overflow" },
@@ -688,11 +707,16 @@ void test("remaps fast context overflow errors and lets Pi compact and retry", a
   assert.equal(compactionEntries.length, 1);
 
   const messages = assistantMessages(session);
-  assert.equal(messages.length, 2);
-  const overflowError = messages[0];
-  const retrySuccess = messages[1];
+  assert.equal(messages.length, 3);
+  const seedSuccess = messages[0];
+  const overflowError = messages[1];
+  const retrySuccess = messages[2];
+  assert.ok(seedSuccess);
   assert.ok(overflowError);
   assert.ok(retrySuccess);
+  assert.equal(seedSuccess.stopReason, "stop");
+  assert.equal(seedSuccess.provider, CODEX_PROVIDER);
+  assert.equal(seedSuccess.api, CODEX_API);
   assert.equal(overflowError.stopReason, "error");
   assert.equal(overflowError.provider, FAST_PROVIDER);
   assert.equal(overflowError.api, CODEX_API);
