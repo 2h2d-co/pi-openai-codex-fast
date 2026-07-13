@@ -25,4 +25,3 @@ Exact matches: normal 4/4, fast 4/4.
 |---|---:|---:|
 | Wall clock duration | 4/4 | -30.07% |
 | TPS | 4/4 | 43.93% |
-

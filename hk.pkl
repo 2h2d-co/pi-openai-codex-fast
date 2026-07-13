@@ -1,11 +1,17 @@
-amends "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/Base.pkl"
+amends "package://github.com/2h2d-co/hk-config/releases/download/v0.0.5/hk-config@0.0.5#/Base.pkl"
 
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/Base.pkl" as Base
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/GitHubActions.pkl" as GitHubActions
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/TypeScript.pkl" as TypeScript
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.5/hk-config@0.0.5#/Base.pkl" as Base
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.5/hk-config@0.0.5#/GitHubActions.pkl" as GitHubActions
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.5/hk-config@0.0.5#/TypeScript.pkl" as TypeScript
+
+local typeScriptSteps = (TypeScript.typeScriptSteps) {
+  ["oxfmt"] = (TypeScript.typeScriptSteps["oxfmt"]) {
+    exclude = List("benchmarks/**/*.json", "benchmarks/**/*.md")
+  }
+}
 
 local steps = (Base.baseSteps) {
-  ...TypeScript.typeScriptSteps
+  ...typeScriptSteps
   ...GitHubActions.gitHubActionsSteps
 }
 

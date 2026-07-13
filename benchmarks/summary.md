@@ -25,4 +25,3 @@ Exact matches: normal 12/12, fast 12/12.
 |---|---:|---:|
 | Wall clock duration | 12/12 | -29.26% |
 | TPS | 12/12 | 42.99% |
-
