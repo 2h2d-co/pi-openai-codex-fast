@@ -1,20 +1,12 @@
-amends "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/Base.pkl"
+amends "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/Base.pkl"
 
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/Base.pkl" as Base
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/GitHubActions.pkl" as GitHubActions
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/TypeScript.pkl" as TypeScript
-import "package://github.com/jdx/hk/releases/download/v1.48.0/hk@1.48.0#/Builtins.pkl"
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/Base.pkl" as Base
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/GitHubActions.pkl" as GitHubActions
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.3/hk-config@0.0.3#/TypeScript.pkl" as TypeScript
 
 local steps = (Base.baseSteps) {
   ...TypeScript.typeScriptSteps
-  ["actionlint"] = GitHubActions.gitHubActionsSteps["actionlint"]
-  ["zizmor"] = Base.optionalCommand(
-    "zizmor",
-    (Builtins.zizmor) {
-      check_diff = "zizmor --no-progress --pedantic {{ files }}"
-      fix = "zizmor --no-progress --pedantic --fix {{ files }}"
-    },
-  )
+  ...GitHubActions.gitHubActionsSteps
 }
 
 hooks = Base.defaultHooks(true, steps)
