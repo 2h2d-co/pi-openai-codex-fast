@@ -69,7 +69,7 @@ npm run test:ts
 npm run test:js
 npm run lint
 npm run fmt
-mise run lint:actions
+hk check --all --check
 npm run benchmark
 ```
 
@@ -92,13 +92,4 @@ Release flow:
 4. The tag push triggers GitHub Actions to stage the package on npm via trusted publishing with npm provenance.
 5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
 
-The CI release workflow intentionally ignores prerelease tags such as `vX.Y.Z-alpha.N`; use the prerelease publish helper for those builds.
-
-Prerelease publish helper for non-latest builds:
-
-```bash
-npm run publish:prerelease
-npm run publish:prerelease -- --execute
-```
-
-`npm run publish:prerelease` runs `npm test` first, then defaults to an npm dry-run. Pass `--execute` to perform the real publish. The helper only supports prerelease versions, derives the npm dist-tag from the first prerelease identifier (`alpha` for `X.Y.Z-alpha.N`, `xyz` for `X.Y.Z-xyz.W`), refuses `latest`, and requires a clean worktree plus a pushed `v<version>` tag pointing at the current commit before a real publish.
+Prerelease tags such as `vX.Y.Z-alpha.N` use the same CI flow. CI derives the npm dist-tag from the first prerelease identifier (`alpha` for `X.Y.Z-alpha.N`, `beta` for `X.Y.Z-beta.N`, and so on); stable versions use `latest`.

@@ -1,0 +1,20 @@
+amends "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/Base.pkl"
+
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/Base.pkl" as Base
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/GitHubActions.pkl" as GitHubActions
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.0.2/hk-config@0.0.2#/TypeScript.pkl" as TypeScript
+import "package://github.com/jdx/hk/releases/download/v1.48.0/hk@1.48.0#/Builtins.pkl"
+
+local steps = (Base.baseSteps) {
+  ...TypeScript.typeScriptSteps
+  ["actionlint"] = GitHubActions.gitHubActionsSteps["actionlint"]
+  ["zizmor"] = Base.optionalCommand(
+    "zizmor",
+    (Builtins.zizmor) {
+      check_diff = "zizmor --no-progress --pedantic {{ files }}"
+      fix = "zizmor --no-progress --pedantic --fix {{ files }}"
+    },
+  )
+}
+
+hooks = Base.defaultHooks(true, steps)

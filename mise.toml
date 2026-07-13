@@ -6,6 +6,8 @@ minimum_release_age = "7d"
 [tools]
 node = "22.23.1"
 npm = "11.18.0"
+hk = { version = "1.48.0", postinstall = "hk install --mise" }
+cocogitto = "7.0.0"
 actionlint = "1.7.12"
 zizmor = "1.26.1"
 
@@ -15,23 +17,6 @@ _.path = ["{{config_root}}/node_modules/.bin"]
 [shell_alias]
 "pi:local" = "command pi --no-extensions -e {{config_root}}"
 "pi:npm" = "command pi --no-extensions -e npm:pi-openai-codex-fast"
-
-[tasks."lint:actions"]
-description = "Lint GitHub Actions workflows with actionlint and zizmor"
-run = """
-if [ ! -d .github/workflows ]; then
-  echo "No .github/workflows directory; skipping GitHub Actions lint."
-  exit 0
-fi
-
-actionlint_status=0
-actionlint || actionlint_status=$?
-if [ "$actionlint_status" -ne 0 ]; then
-  exit "$actionlint_status"
-fi
-echo "actionlint found no issues."
-zizmor -p .github/workflows
-"""
 
 [tasks.benchmark]
 description = "Run the full OpenAI Codex Fast benchmark suite against the local extension"

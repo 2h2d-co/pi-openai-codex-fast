@@ -20,24 +20,11 @@ if (process.argv.length > 2) {
   throw new Error("ci-publish-checks.ts does not accept arguments.");
 }
 
-assertStableReleaseVersion(version);
 assertCiReleaseGitState(version);
-const npmTag = "latest";
+const npmTag = deriveNpmTag(version);
 writeGithubOutput("npm_tag", npmTag);
 
 console.log(`Validated CI release for ${packageName}@${version} with npm dist-tag "${npmTag}".`);
-
-function assertStableReleaseVersion(version: string): void {
-  if (version.includes("-")) {
-    throw new Error(
-      `CI publishes stable releases only. Refusing prerelease version "${version}"; use npm run publish:prerelease for prereleases.`,
-    );
-  }
-
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    throw new Error(`CI release version "${version}" must be a stable X.Y.Z version.`);
-  }
-}
 
 function assertCiReleaseGitState(version: string): void {
   const releaseTag = `v${version}`;
@@ -91,6 +78,38 @@ function assertCiReleaseGitState(version: string): void {
       `Refusing release because tag "${releaseTag}" does not point to a commit on origin/main.`,
     );
   }
+}
+
+function deriveNpmTag(version: string): string {
+  const prerelease = version.match(/-([0-9A-Za-z.-]+)$/)?.[1];
+  if (!prerelease) {
+    return "latest";
+  }
+
+  const firstIdentifier = prerelease.split(".")[0]?.toLowerCase();
+  if (!firstIdentifier) {
+    throw new Error(`Could not derive npm dist-tag from version "${version}"`);
+  }
+
+  if (/^\d+$/.test(firstIdentifier)) {
+    throw new Error(
+      `Version "${version}" has a numeric prerelease identifier. Use a named prerelease like alpha, beta, rc, or publish manually.`,
+    );
+  }
+
+  if (!/^[a-z][a-z0-9-]*$/.test(firstIdentifier)) {
+    throw new Error(
+      `Derived npm dist-tag "${firstIdentifier}" from version "${version}" is invalid. Use a prerelease like alpha.0, beta.1, or rc.2.`,
+    );
+  }
+
+  if (firstIdentifier === "latest") {
+    throw new Error(
+      `Refusing prerelease version "${version}" because it derives the reserved "latest" npm dist-tag.`,
+    );
+  }
+
+  return firstIdentifier;
 }
 
 function writeGithubOutput(name: string, value: string): void {
