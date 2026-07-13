@@ -27,7 +27,7 @@ import {
 } from "@earendil-works/pi-ai/compat";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const extensionPath = resolve(rootDir, process.env.TEST_EXTENSION_PATH ?? "index.ts");
+const extensionPath = resolve(rootDir, process.env["TEST_EXTENSION_PATH"] ?? "index.ts");
 
 const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
@@ -234,7 +234,7 @@ async function startCodexServer(
     const body = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
     requests.push({ method: req.method, url: req.url, headers: req.headers, body });
 
-    const isModelRequest = typeof body.model === "string";
+    const isModelRequest = typeof body["model"] === "string";
     const batch = isModelRequest
       ? (responseBatches[Math.min(requestIndex, responseBatches.length - 1)] ?? {})
       : {};
@@ -641,8 +641,8 @@ void test("runs a real Pi prompt through fast Codex as priority while storing ca
   assert.equal(request.method, "POST");
   assert.equal(request.url, "/codex/responses");
   assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
-  assert.equal(request.body.model, MODEL_ID);
-  assert.equal(request.body.service_tier, "priority");
+  assert.equal(request.body["model"], MODEL_ID);
+  assert.equal(request.body["service_tier"], "priority");
 
   const messages = assistantMessages(session);
   assert.equal(messages.length, 1);
@@ -693,9 +693,9 @@ void test("remaps fast context overflow errors and lets Pi compact and retry", a
   await session.prompt("seed history", { expandPromptTemplates: false });
   await session.prompt("overflow then recover", { expandPromptTemplates: false });
 
-  const modelRequests = server.requests.filter((request) => request.body.model === MODEL_ID);
+  const modelRequests = server.requests.filter((request) => request.body["model"] === MODEL_ID);
   assert.equal(modelRequests.length, 4);
-  assert.ok(modelRequests.every((request) => request.body.service_tier === "priority"));
+  assert.ok(modelRequests.every((request) => request.body["service_tier"] === "priority"));
   assert.deepEqual(compactionEvents, [
     { reason: "overflow" },
     { reason: "overflow", willRetry: true, errorMessage: undefined },
@@ -742,7 +742,7 @@ void test("stores tool-calling fast replies canonically through the real Pi agen
   await session.prompt("please call a tool", { expandPromptTemplates: false });
 
   assert.equal(server.requests.length, 2);
-  assert.ok(server.requests.every((request) => request.body.service_tier === "priority"));
+  assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
 
   const messages = assistantMessages(session);
   assert.equal(messages.length, 2);

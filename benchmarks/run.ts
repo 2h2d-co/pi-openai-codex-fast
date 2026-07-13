@@ -136,17 +136,17 @@ function parseModelIds(args: string[]): string[] {
 }
 
 const MODEL_IDS = parseModelIds(process.argv.slice(2));
-const TIMEOUT_MS = Number(process.env.TIMEOUT_MS ?? "300000");
+const TIMEOUT_MS = Number(process.env["TIMEOUT_MS"] ?? "300000");
 const BASE_PRICING = { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 };
 const SYSTEM_PROMPT =
   "You are a deterministic sorter. Obey the requested output format exactly and provide no commentary.";
-const ITEM_COUNT = Number(process.env.ITEM_COUNT ?? "200");
-const TURNS_PER_LEVEL = Number(process.env.TURNS_PER_LEVEL ?? "2");
-const LEVELS = (process.env.LEVELS ?? "low,medium")
+const ITEM_COUNT = Number(process.env["ITEM_COUNT"] ?? "200");
+const TURNS_PER_LEVEL = Number(process.env["TURNS_PER_LEVEL"] ?? "2");
+const LEVELS = (process.env["LEVELS"] ?? "low,medium")
   .split(",")
   .map((level) => level.trim())
   .filter(Boolean);
-const ORIGINAL_PATH = process.env.PATH ?? "";
+const ORIGINAL_PATH = process.env["PATH"] ?? "";
 const TEMP_BIN = mkdtempSync(join(tmpdir(), "pi-openai-codex-fast-bench-"));
 
 function findPi(): string {
@@ -156,7 +156,7 @@ function findPi(): string {
 }
 
 function installPiWrapper(): void {
-  const realPi = process.env.PI_BIN ?? findPi();
+  const realPi = process.env["PI_BIN"] ?? findPi();
   writeFileSync(
     join(TEMP_BIN, "pi"),
     `#!/usr/bin/env node\nimport { spawnSync } from "node:child_process";\nconst result = spawnSync(${JSON.stringify(realPi)}, ["-e", ${JSON.stringify(ROOT)}, ...process.argv.slice(2)], { stdio: "inherit" });\nif (result.error) throw result.error;\nprocess.exit(result.status ?? 1);\n`,
@@ -324,7 +324,7 @@ function runPiOnce(
   return new Promise((resolve, reject) => {
     const systemPrompt = `${randomUUID()} is a cache-bust nonce. Ignore this nonce; it is not part of the sorting task. ${benchmarkCase.systemPrompt}`;
     const child = spawn("pi", buildPiArgs(model, benchmarkCase, systemPrompt, trial.prompt), {
-      cwd: process.env.PI_BENCH_CWD ?? process.cwd(),
+      cwd: process.env["PI_BENCH_CWD"] ?? process.cwd(),
       env: { ...process.env, PATH: `${TEMP_BIN}:${ORIGINAL_PATH}` },
       stdio: ["ignore", "pipe", "pipe"],
     });
