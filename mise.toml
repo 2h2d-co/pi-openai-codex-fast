@@ -4,8 +4,8 @@ locked = true
 minimum_release_age = "7d"
 
 [tools]
-node = "22.23.1"
-npm = "11.18.0"
+node = "22"
+npm = "11"
 hk = { version = "1.48.0", postinstall = "hk install --mise" }
 cocogitto = "7.0.0"
 actionlint = "1.7.12"
