@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.9 - 2026-07-15
+
 - Update Pi development dependencies to 0.80.7.
 
 ## 0.0.8 - 2026-07-10
