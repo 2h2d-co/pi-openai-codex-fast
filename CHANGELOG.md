@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update Pi development dependencies to 0.80.7.
+
 ## 0.0.8 - 2026-07-10
 
 - Add priority-tier Codex requests for `gpt-5.6-luna`, `gpt-5.6-terra`, and `gpt-5.6-sol`.
