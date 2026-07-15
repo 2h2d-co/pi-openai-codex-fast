@@ -6,7 +6,7 @@ minimum_release_age = "7d"
 [tools]
 node = "22"
 npm = "11"
-hk = { version = "1.50.0", postinstall = "hk install --mise" }
+hk = { version = "1.51.0", postinstall = "hk install --mise" }
 cocogitto = "7.0.0"
 actionlint = "1.7.12"
 zizmor = "1.26.1"

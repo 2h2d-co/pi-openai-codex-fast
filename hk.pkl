@@ -1,8 +1,8 @@
-amends "package://github.com/jdx/hk/releases/download/v1.50.0/hk@1.50.0#/Config.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.51.0/hk@1.51.0#/Config.pkl"
 
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.1.1/hk-config@0.1.1#/Base.pkl" as Base
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.1.1/hk-config@0.1.1#/GitHubActions.pkl" as GitHubActions
-import "package://github.com/2h2d-co/hk-config/releases/download/v0.1.1/hk-config@0.1.1#/TypeScript.pkl" as TypeScript
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.2.0/hk-config@0.2.0#/Base.pkl" as Base
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.2.0/hk-config@0.2.0#/GitHubActions.pkl" as GitHubActions
+import "package://github.com/2h2d-co/hk-config/releases/download/v0.2.0/hk-config@0.2.0#/TypeScript.pkl" as TypeScript
 
 local projectSteps = (Base.baseSteps) {
   ...TypeScript.typeScriptSteps
@@ -10,23 +10,4 @@ local projectSteps = (Base.baseSteps) {
 }
 
 display_skip_reasons = Base.displaySkipReasons
-hooks = new Mapping<String, Hook> {
-  ["pre-commit"] {
-    fix = true
-    stash = "git"
-    steps = projectSteps
-  }
-  ["pre-push"] {
-    steps = projectSteps
-  }
-  ["commit-msg"] {
-    steps = Base.commitMessageSteps
-  }
-  ["fix"] {
-    fix = true
-    steps = projectSteps
-  }
-  ["check"] {
-    steps = projectSteps
-  }
-}
+hooks = Base.defaultHooks(true, projectSteps)
