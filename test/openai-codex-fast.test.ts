@@ -10,20 +10,18 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   ModelRuntime,
+  resolveModelScopeWithDiagnostics,
   SessionManager,
   SettingsManager,
   type AgentSession,
   type CompactionSettings,
   type CreateAgentSessionResult,
-  type ExtensionUIContext,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
-  InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
   type Credential,
-  type CredentialStore,
   type Model,
 } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
@@ -78,11 +76,6 @@ interface CodexTestServer {
   requests: CapturedRequest[];
 }
 
-interface CapturedNotification {
-  message: string;
-  type: "info" | "warning" | "error";
-}
-
 interface IntegrationSessionOptions {
   bindExtensions?: boolean;
   codexBaseUrl?: string;
@@ -119,10 +112,6 @@ async function writeCodexAuth(agentDir: string, token = fakeCodexToken()): Promi
     join(agentDir, "auth.json"),
     JSON.stringify({ [CODEX_PROVIDER]: codexCredential(token) }, null, 2),
   );
-}
-
-async function setCodexCredential(credentials: CredentialStore): Promise<void> {
-  await credentials.modify(CODEX_PROVIDER, async () => codexCredential());
 }
 
 function responseCompleted(id: string, usage: UsageFixture = { input: 10, output: 5 }): SseEvent {
@@ -311,47 +300,9 @@ async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<voi
   });
 }
 
-function createCapturingUiContext(notifications: CapturedNotification[]): ExtensionUIContext {
-  return {
-    select: async () => undefined,
-    confirm: async () => false,
-    input: async () => undefined,
-    notify(message, type) {
-      notifications.push({ message, type: type ?? "info" });
-    },
-    onTerminalInput: () => () => {},
-    setStatus: () => {},
-    setWorkingMessage: () => {},
-    setWorkingVisible: () => {},
-    setWorkingIndicator: () => {},
-    setHiddenThinkingLabel: () => {},
-    setWidget: () => {},
-    setFooter: () => {},
-    setHeader: () => {},
-    setTitle: () => {},
-    custom: async <T>() => undefined as T,
-    pasteToEditor: () => {},
-    setEditorText: () => {},
-    getEditorText: () => "",
-    editor: async () => undefined,
-    addAutocompleteProvider: () => {},
-    setEditorComponent: () => {},
-    getEditorComponent: () => undefined,
-    theme: {} as ExtensionUIContext["theme"],
-    getAllThemes: () => [],
-    getTheme: () => undefined,
-    setTheme: () => ({ success: false, error: "UI not available in tests" }),
-    getToolsExpanded: () => false,
-    setToolsExpanded: () => {},
-  };
-}
-
-async function createTestModelRuntime(
-  agentDir: string,
-  credentials?: CredentialStore,
-): Promise<ModelRuntime> {
+async function createTestModelRuntime(agentDir: string): Promise<ModelRuntime> {
   return ModelRuntime.create({
-    ...(credentials ? { credentials } : { authPath: join(agentDir, "auth.json") }),
+    authPath: join(agentDir, "auth.json"),
     modelsPath: null,
     allowModelNetwork: false,
   });
@@ -431,7 +382,7 @@ async function createIntegrationSession(
   t.after(() => result.session.dispose());
 
   assert.deepEqual(result.extensionsResult.errors, []);
-  assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
+  assert.ok(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
   if (options.bindExtensions !== false) {
     await result.session.bindExtensions({});
   }
@@ -474,7 +425,7 @@ void test("package manifest keeps npm package name while loading the top-level e
   assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
 });
 
-void test("loads extension disabled when built-in Codex auth is missing", async (t) => {
+void test("registers fast models before session_start without requiring Codex auth", async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-auth-"));
   const cwd = join(tempRoot, "cwd");
   const agentDir = join(tempRoot, "agent");
@@ -482,8 +433,7 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   await mkdir(agentDir, { recursive: true });
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
-  const credentials = new InMemoryCredentialStore();
-  const modelRuntime = await createTestModelRuntime(agentDir, credentials);
+  const modelRuntime = await createTestModelRuntime(agentDir);
   const settingsManager = SettingsManager.inMemory({});
   const resourceLoader = new DefaultResourceLoader({
     cwd,
@@ -500,7 +450,7 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
 
   const extensionsResult = resourceLoader.getExtensions();
   assert.equal(extensionsResult.extensions.length, 1);
-  assert.equal(extensionsResult.runtime.pendingProviderRegistrations.length, 0);
+  assert.equal(extensionsResult.runtime.pendingProviderRegistrations.length, 1);
   assert.deepEqual(extensionsResult.errors, []);
 
   const result = await createAgentSession({
@@ -514,114 +464,18 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   });
   t.after(() => result.session.dispose());
 
-  const consoleErrors: string[] = [];
-  const originalConsoleError = console.error;
-  console.error = (...args: unknown[]) => {
-    consoleErrors.push(args.map(String).join(" "));
-  };
-  try {
-    await result.session.bindExtensions({});
-  } finally {
-    console.error = originalConsoleError;
-  }
-
-  assert.match(consoleErrors.join("\n"), /No openai-codex auth found/);
-  assert.doesNotMatch(consoleErrors.join("\n"), /\[openai-codex-fast\].*\[openai-codex-fast\]/);
-  assert.equal(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
-  assert.ok(!result.session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
-
-  await setCodexCredential(credentials);
-  const retryConsoleErrors: string[] = [];
-  console.error = (...args: unknown[]) => {
-    retryConsoleErrors.push(args.map(String).join(" "));
-  };
-  try {
-    await result.session.bindExtensions({});
-  } finally {
-    console.error = originalConsoleError;
-  }
-
-  assert.equal(retryConsoleErrors.join("\n"), "");
   assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
-});
-
-void test("drains disabled-load diagnostics and registers after auth is fixed for a new session", async (t) => {
-  const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-diagnostics-"));
-  const cwd = join(tempRoot, "cwd");
-  const agentDir = join(tempRoot, "agent");
-  await mkdir(cwd, { recursive: true });
-  await mkdir(agentDir, { recursive: true });
-  t.after(async () => rm(tempRoot, { recursive: true, force: true }));
-
-  const credentials = new InMemoryCredentialStore();
-  const modelRuntime = await createTestModelRuntime(agentDir, credentials);
-  const settingsManager = SettingsManager.inMemory({});
-  const resourceLoader = new DefaultResourceLoader({
-    cwd,
-    agentDir,
-    settingsManager,
-    additionalExtensionPaths: [extensionPath],
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-  });
-
-  await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
-  assert.equal(resourceLoader.getExtensions().extensions.length, 1);
-  assert.deepEqual(resourceLoader.getExtensions().errors, []);
-  assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
-  assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
-
-  const first = await createAgentSession({
-    cwd,
-    agentDir,
-    modelRuntime,
-    settingsManager,
-    sessionManager: SessionManager.inMemory(cwd),
-    resourceLoader,
-    noTools: "all",
-  });
-  t.after(() => first.session.dispose());
-
-  const notifications: CapturedNotification[] = [];
-  const uiContext = createCapturingUiContext(notifications);
-  assert.equal(notifications.length, 0);
-  await first.session.bindExtensions({ uiContext });
-
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0]?.type, "error");
-  assert.match(notifications[0]?.message ?? "", /No openai-codex auth found/);
-  assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
-  assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
-
-  await setCodexCredential(credentials);
-  // Reuse the loaded extension runtime so this proves the first session_start drained its
-  // queued diagnostic instead of merely relying on a fresh extension instance.
-  const second = await createAgentSession({
-    cwd,
-    agentDir,
-    modelRuntime,
-    settingsManager,
-    sessionManager: SessionManager.inMemory(cwd),
-    resourceLoader,
-    noTools: "all",
-    sessionStartEvent: {
-      type: "session_start",
-      reason: "new",
-      previousSessionFile: "previous-session.jsonl",
-    },
-  });
-  t.after(() => second.session.dispose());
-
-  assert.equal(notifications.length, 1);
-  await second.session.bindExtensions({ uiContext });
-
-  assert.equal(notifications.length, 1);
-  const fastModel = modelRuntime.getModel(FAST_PROVIDER, MODEL_ID);
-  assert.ok(fastModel);
-  assert.equal(fastModel.api, FAST_API);
-  assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
+  const scope = await resolveModelScopeWithDiagnostics(
+    [`${FAST_PROVIDER}/gpt-5.6-sol`, `${FAST_PROVIDER}/gpt-5.6-terra`, `${FAST_PROVIDER}/gpt-5.5`],
+    result.session.modelRuntime,
+  );
+  assert.deepEqual(scope.diagnostics, []);
+  assert.deepEqual(
+    scope.scopedModels.map(({ model }) => model.id),
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"],
+  );
+  await result.session.bindExtensions({});
+  assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
 });
 
 void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {

@@ -7,7 +7,7 @@ import {
 import {
   clampThinkingLevel,
   createAssistantMessageEventStream,
-  hasApi,
+  getModels,
   isContextOverflow,
   streamOpenAICodexResponses,
   type Api,
@@ -163,7 +163,7 @@ function endWithCanonicalError(
 }
 
 function streamSimpleOpenAICodexFast(
-  modelRegistry: ModelRegistry,
+  modelRegistry: ModelRegistry | undefined,
   openAICodexModels: readonly Model<OpenAICodexApi>[],
   model: Model<Api>,
   context: Context,
@@ -179,6 +179,16 @@ function streamSimpleOpenAICodexFast(
           outer,
           model.id,
           `Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`,
+          options,
+        );
+        return;
+      }
+
+      if (!modelRegistry) {
+        endWithCanonicalError(
+          outer,
+          model.id,
+          `${OPENAI_CODEX_FAST_PROVIDER} session is not initialized.`,
           options,
         );
         return;
@@ -230,37 +240,16 @@ function streamSimpleOpenAICodexFast(
 }
 
 export default function (pi: ExtensionAPI) {
+  const openAICodexModels = getModels(OPENAI_CODEX_PROVIDER);
+  const openAICodexFastModels = getOpenAICodexFastModels(openAICodexModels);
   const diagnostics: ExtensionDiagnostic[] = [];
+  const baseUrl = getFastProviderBaseUrl(openAICodexFastModels);
+  let modelRegistry: ModelRegistry | undefined;
   let providerRegistered = false;
 
-  async function registerFastProviderIfReady(modelRegistry: ModelRegistry): Promise<void> {
-    if (providerRegistered) {
-      return;
-    }
-
-    const openAICodexModels = modelRegistry
-      .getAll()
-      .filter(
-        (model): model is Model<OpenAICodexApi> =>
-          model.provider === OPENAI_CODEX_PROVIDER && hasApi(model, OPENAI_CODEX_API),
-      );
-    const openAICodexFastModels = getOpenAICodexFastModels(openAICodexModels);
-    const baseUrl = getFastProviderBaseUrl(openAICodexFastModels);
-    if (!baseUrl.ok) {
-      diagnostics.push(baseUrl.diagnostic);
-      return;
-    }
-
-    const authModel = openAICodexModels[0];
-    if (!authModel) {
-      return;
-    }
-    const auth = await getOpenAICodexAuth(modelRegistry, authModel);
-    if (!auth.ok) {
-      diagnostics.push(auth.diagnostic);
-      return;
-    }
-
+  if (!baseUrl.ok) {
+    diagnostics.push(baseUrl.diagnostic);
+  } else {
     pi.registerProvider(OPENAI_CODEX_FAST_PROVIDER, {
       name: "OpenAI Codex Fast",
       baseUrl: baseUrl.value,
@@ -274,9 +263,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
-    if (!providerRegistered && diagnostics.length === 0) {
-      await registerFastProviderIfReady(ctx.modelRegistry);
-    }
+    modelRegistry = ctx.modelRegistry;
     for (const diagnostic of diagnostics.splice(0)) {
       if (ctx.hasUI) {
         ctx.ui.notify(diagnostic.message, diagnostic.type);
