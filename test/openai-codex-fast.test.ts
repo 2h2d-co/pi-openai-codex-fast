@@ -7,10 +7,9 @@ import { test, type TestContext } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { zstdDecompressSync } from "node:zlib";
 import {
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type AgentSession,
@@ -20,11 +19,14 @@ import {
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import {
-  getModels,
+  InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
+  type Credential,
+  type CredentialStore,
   type Model,
-} from "@earendil-works/pi-ai/compat";
+} from "@earendil-works/pi-ai";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, process.env["TEST_EXTENSION_PATH"] ?? "index.ts");
@@ -105,12 +107,26 @@ function fakeCodexToken(): string {
   ].join(".");
 }
 
+function codexCredential(token = fakeCodexToken()): Credential {
+  return {
+    type: "oauth",
+    access: token,
+    refresh: "refresh_test",
+    expires: Date.now() + 60 * 60 * 1000,
+    accountId: "acct_test",
+  };
+}
+
 async function writeCodexAuth(agentDir: string, token = fakeCodexToken()): Promise<void> {
   await mkdir(agentDir, { recursive: true });
   await writeFile(
     join(agentDir, "auth.json"),
-    JSON.stringify({ [CODEX_PROVIDER]: { type: "api_key", key: token } }, null, 2),
+    JSON.stringify({ [CODEX_PROVIDER]: codexCredential(token) }, null, 2),
   );
+}
+
+async function setCodexCredential(credentials: CredentialStore): Promise<void> {
+  await credentials.modify(CODEX_PROVIDER, async () => codexCredential());
 }
 
 async function clearCodexAuth(agentDir: string): Promise<void> {
@@ -269,34 +285,27 @@ async function startCodexServer(
 }
 
 async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<void> {
-  const piAiModules: Array<{ getModels: typeof getModels }> = [{ getModels }];
-  const nestedPiAiPaths = [
-    resolve(
-      rootDir,
-      "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/compat.js",
-    ),
-    resolve(
-      rootDir,
-      "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/index.js",
-    ),
-  ];
+  type GetCodexModels = () => Model<typeof CODEX_API>[];
+  const getCodexModels: GetCodexModels[] = [() => getBuiltinModels(CODEX_PROVIDER)];
+  const nestedPiAiPath = resolve(
+    rootDir,
+    "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works/pi-ai/dist/providers/all.js",
+  );
 
-  for (const nestedPiAiPath of nestedPiAiPaths) {
-    try {
-      const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
-        getModels?: typeof getModels;
-      };
-      if (nestedPiAi.getModels && nestedPiAi.getModels !== getModels) {
-        piAiModules.push({ getModels: nestedPiAi.getModels });
-      }
-    } catch {
-      // No nested Pi AI copy is installed in this dependency layout.
+  try {
+    const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
+      getBuiltinModels?: (provider: typeof CODEX_PROVIDER) => Model<typeof CODEX_API>[];
+    };
+    if (nestedPiAi.getBuiltinModels) {
+      getCodexModels.push(() => nestedPiAi.getBuiltinModels!(CODEX_PROVIDER));
     }
+  } catch {
+    // No nested Pi AI copy is installed in this dependency layout.
   }
 
   const previousBaseUrls: Array<[Model<typeof CODEX_API>, string]> = [];
-  for (const piAi of piAiModules) {
-    const models = piAi.getModels(CODEX_PROVIDER) as Model<typeof CODEX_API>[];
+  for (const getModels of getCodexModels) {
+    const models = getModels();
     for (const model of models) {
       previousBaseUrls.push([model, model.baseUrl]);
       model.baseUrl = baseUrl;
@@ -345,6 +354,17 @@ function createCapturingUiContext(notifications: CapturedNotification[]): Extens
   };
 }
 
+async function createTestModelRuntime(
+  agentDir: string,
+  credentials?: CredentialStore,
+): Promise<ModelRuntime> {
+  return ModelRuntime.create({
+    ...(credentials ? { credentials } : { authPath: join(agentDir, "auth.json") }),
+    modelsPath: null,
+    allowModelNetwork: false,
+  });
+}
+
 async function reloadResourceLoaderWithAgentDir(
   resourceLoader: DefaultResourceLoader,
   agentDir: string,
@@ -377,8 +397,7 @@ async function createIntegrationSession(
     await pointBuiltInCodexAt(options.codexBaseUrl, t);
   }
 
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const modelRuntime = await createTestModelRuntime(agentDir);
   const settingsManager = SettingsManager.inMemory({
     transport: "sse",
     defaultThinkingLevel: "off",
@@ -398,14 +417,13 @@ async function createIntegrationSession(
 
   await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
 
-  const initialModel = modelRegistry.find(CODEX_PROVIDER, MODEL_ID);
+  const initialModel = modelRuntime.getModel(CODEX_PROVIDER, MODEL_ID);
   assert.ok(initialModel, `Expected built-in ${CODEX_PROVIDER}/${MODEL_ID} to exist`);
 
   const result = await createAgentSession({
     cwd,
     agentDir,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     settingsManager,
     sessionManager: options.sessionManager ?? SessionManager.inMemory(cwd),
     resourceLoader,
@@ -425,7 +443,7 @@ async function createIntegrationSession(
 }
 
 async function selectFastModel(session: AgentSession, modelId = MODEL_ID): Promise<Model<Api>> {
-  const fastModel = session.modelRegistry.find(FAST_PROVIDER, modelId);
+  const fastModel = session.modelRuntime.getModel(FAST_PROVIDER, modelId);
   assert.ok(fastModel, `Expected registered ${FAST_PROVIDER}/${modelId} model`);
   await session.setModel(fastModel);
   assert.equal(session.model?.provider, FAST_PROVIDER);
@@ -469,8 +487,8 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   await clearCodexAuth(agentDir);
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const credentials = new InMemoryCredentialStore();
+  const modelRuntime = await createTestModelRuntime(agentDir, credentials);
   const settingsManager = SettingsManager.inMemory({});
   const resourceLoader = new DefaultResourceLoader({
     cwd,
@@ -493,8 +511,7 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   const result = await createAgentSession({
     cwd,
     agentDir,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
     resourceLoader,
@@ -515,10 +532,11 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
 
   assert.match(consoleErrors.join("\n"), /No openai-codex auth found/);
   assert.doesNotMatch(consoleErrors.join("\n"), /\[openai-codex-fast\].*\[openai-codex-fast\]/);
-  assert.equal(result.session.modelRegistry.find(FAST_PROVIDER, MODEL_ID), undefined);
+  assert.equal(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
   assert.ok(!result.session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
 
   await writeCodexAuth(agentDir);
+  await setCodexCredential(credentials);
   const retryConsoleErrors: string[] = [];
   console.error = (...args: unknown[]) => {
     retryConsoleErrors.push(args.map(String).join(" "));
@@ -530,7 +548,7 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   }
 
   assert.equal(retryConsoleErrors.join("\n"), "");
-  assert.ok(result.session.modelRegistry.find(FAST_PROVIDER, MODEL_ID));
+  assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
 });
 
 void test("drains disabled-load diagnostics and registers after auth is fixed for a new session", async (t) => {
@@ -542,8 +560,8 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
   await clearCodexAuth(agentDir);
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
-  const authStorage = AuthStorage.create(join(agentDir, "auth.json"));
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
+  const credentials = new InMemoryCredentialStore();
+  const modelRuntime = await createTestModelRuntime(agentDir, credentials);
   const settingsManager = SettingsManager.inMemory({});
   const resourceLoader = new DefaultResourceLoader({
     cwd,
@@ -560,13 +578,12 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
   assert.equal(resourceLoader.getExtensions().extensions.length, 1);
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
   assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
-  assert.equal(modelRegistry.find(FAST_PROVIDER, MODEL_ID), undefined);
+  assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
 
   const first = await createAgentSession({
     cwd,
     agentDir,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
     resourceLoader,
@@ -582,17 +599,17 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
   assert.equal(notifications.length, 1);
   assert.equal(notifications[0]?.type, "error");
   assert.match(notifications[0]?.message ?? "", /No openai-codex auth found/);
-  assert.equal(modelRegistry.find(FAST_PROVIDER, MODEL_ID), undefined);
+  assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
   assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
 
   await writeCodexAuth(agentDir);
+  await setCodexCredential(credentials);
   // Reuse the loaded extension runtime so this proves the first session_start drained its
   // queued diagnostic instead of merely relying on a fresh extension instance.
   const second = await createAgentSession({
     cwd,
     agentDir,
-    authStorage,
-    modelRegistry,
+    modelRuntime,
     settingsManager,
     sessionManager: SessionManager.inMemory(cwd),
     resourceLoader,
@@ -609,7 +626,7 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
   await second.session.bindExtensions({ uiContext });
 
   assert.equal(notifications.length, 1);
-  const fastModel = modelRegistry.find(FAST_PROVIDER, MODEL_ID);
+  const fastModel = modelRuntime.getModel(FAST_PROVIDER, MODEL_ID);
   assert.ok(fastModel);
   assert.equal(fastModel.api, FAST_API);
   assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
@@ -617,8 +634,8 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
 
 void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
   const { session } = await createIntegrationSession(t);
-  const fastModels = session.modelRegistry
-    .getAll()
+  const fastModels = session.modelRuntime
+    .getModels(FAST_PROVIDER)
     .filter((model) => model.provider === FAST_PROVIDER);
 
   assert.deepEqual(fastModels.map((model) => model.id).sort(), [...FAST_MODEL_IDS].sort());

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Update Pi dependencies to 0.80.10 and migrate auth/model integration to the new `ModelRuntime` and `CredentialStore` APIs.
+
 ## 0.0.9 - 2026-07-15
 
 - Update Pi development dependencies to 0.80.7.
