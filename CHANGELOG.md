@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.10 - 2026-07-17
+
 - Update Pi dependencies to 0.80.10, use the session-scoped model registry for request auth, and migrate the SDK test harness to `ModelRuntime`.
 - Register the fast model catalog during extension loading so startup `enabledModels` patterns resolve before `session_start`.
 
