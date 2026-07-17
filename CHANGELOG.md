@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Update Pi dependencies to 0.80.10 and migrate auth/model integration to the new `ModelRuntime` and `CredentialStore` APIs.
+- Update Pi dependencies to 0.80.10, use the session-scoped model registry for extension auth/model integration, and migrate the SDK test harness to `ModelRuntime` and `CredentialStore`.
 
 ## 0.0.9 - 2026-07-15
 

@@ -1,7 +1,4 @@
-import { join } from "node:path";
 import {
-  getAgentDir,
-  ModelRuntime,
   type ExtensionAPI,
   type ModelChangeEntry,
   type ModelRegistry,
@@ -42,9 +39,6 @@ type ExtensionDiagnostic = {
 
 type Result<T> = { ok: true; value: T } | { ok: false; diagnostic: ExtensionDiagnostic };
 type OpenAICodexApi = typeof OPENAI_CODEX_API;
-type OpenAICodexAuthSource =
-  | { modelRuntime: ModelRuntime }
-  | { modelRegistry: ModelRegistry; model: Model<OpenAICodexApi> };
 
 function authFailedDiagnostic(reason: string): ExtensionDiagnostic {
   return {
@@ -54,21 +48,17 @@ function authFailedDiagnostic(reason: string): ExtensionDiagnostic {
   };
 }
 
-async function getOpenAICodexAuth(source: OpenAICodexAuthSource): Promise<Result<string>> {
+async function getOpenAICodexAuth(
+  modelRegistry: ModelRegistry,
+  model: Model<OpenAICodexApi>,
+): Promise<Result<string>> {
   try {
-    let apiKey: string | undefined;
-    if ("modelRuntime" in source) {
-      apiKey = (await source.modelRuntime.getAuth(OPENAI_CODEX_PROVIDER))?.auth.apiKey;
-    } else {
-      const auth = await source.modelRegistry.getApiKeyAndHeaders(source.model);
-      if (!auth.ok) {
-        return { ok: false, diagnostic: authFailedDiagnostic(auth.error) };
-      }
-      apiKey = auth.apiKey;
+    const auth = await modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok) {
+      return { ok: false, diagnostic: authFailedDiagnostic(auth.error) };
     }
-
-    if (apiKey) {
-      return { ok: true, value: apiKey };
+    if (auth.apiKey) {
+      return { ok: true, value: auth.apiKey };
     }
 
     return {
@@ -85,10 +75,6 @@ async function getOpenAICodexAuth(source: OpenAICodexAuthSource): Promise<Result
       diagnostic: authFailedDiagnostic(error instanceof Error ? error.message : String(error)),
     };
   }
-}
-
-async function createAuthModelRuntime(authPath: string): Promise<ModelRuntime> {
-  return ModelRuntime.create({ authPath, modelsPath: null, allowModelNetwork: false });
 }
 
 function getOpenAICodexFastModels(
@@ -177,8 +163,7 @@ function endWithCanonicalError(
 }
 
 function streamSimpleOpenAICodexFast(
-  authPath: string,
-  modelRegistry: ModelRegistry | undefined,
+  modelRegistry: ModelRegistry,
   openAICodexModels: readonly Model<OpenAICodexApi>[],
   model: Model<Api>,
   context: Context,
@@ -199,11 +184,7 @@ function streamSimpleOpenAICodexFast(
         return;
       }
 
-      const auth = await getOpenAICodexAuth(
-        modelRegistry
-          ? { modelRegistry, model: codexModel }
-          : { modelRuntime: await createAuthModelRuntime(authPath) },
-      );
+      const auth = await getOpenAICodexAuth(modelRegistry, codexModel);
       if (!auth.ok) {
         endWithCanonicalError(outer, model.id, auth.diagnostic.message, options);
         return;
@@ -248,43 +229,35 @@ function streamSimpleOpenAICodexFast(
   return outer;
 }
 
-export default async function (pi: ExtensionAPI) {
-  const agentDir = getAgentDir();
-  const authPath = join(agentDir, "auth.json");
-  const startupModelRuntime = await ModelRuntime.create({
-    authPath,
-    modelsPath: null,
-    allowModelNetwork: false,
-  });
-  const openAICodexModels = startupModelRuntime
-    .getModels(OPENAI_CODEX_PROVIDER)
-    .filter((model): model is Model<OpenAICodexApi> => hasApi(model, OPENAI_CODEX_API));
-  const openAICodexFastModels = getOpenAICodexFastModels(openAICodexModels);
+export default function (pi: ExtensionAPI) {
   const diagnostics: ExtensionDiagnostic[] = [];
-  let modelRegistry: ModelRegistry | undefined;
   let providerRegistered = false;
 
-  async function registerFastProviderIfReady(fallbackModelRuntime?: ModelRuntime): Promise<void> {
+  async function registerFastProviderIfReady(modelRegistry: ModelRegistry): Promise<void> {
     if (providerRegistered) {
       return;
     }
 
-    const authModel = openAICodexModels[0];
-    const auth = await getOpenAICodexAuth(
-      modelRegistry && authModel
-        ? { modelRegistry, model: authModel }
-        : { modelRuntime: fallbackModelRuntime ?? (await createAuthModelRuntime(authPath)) },
-    );
-    if (!auth.ok) {
-      diagnostics.push(auth.diagnostic);
-    }
-
+    const openAICodexModels = modelRegistry
+      .getAll()
+      .filter(
+        (model): model is Model<OpenAICodexApi> =>
+          model.provider === OPENAI_CODEX_PROVIDER && hasApi(model, OPENAI_CODEX_API),
+      );
+    const openAICodexFastModels = getOpenAICodexFastModels(openAICodexModels);
     const baseUrl = getFastProviderBaseUrl(openAICodexFastModels);
     if (!baseUrl.ok) {
       diagnostics.push(baseUrl.diagnostic);
+      return;
     }
 
-    if (!auth.ok || !baseUrl.ok) {
+    const authModel = openAICodexModels[0];
+    if (!authModel) {
+      return;
+    }
+    const auth = await getOpenAICodexAuth(modelRegistry, authModel);
+    if (!auth.ok) {
+      diagnostics.push(auth.diagnostic);
       return;
     }
 
@@ -295,22 +268,14 @@ export default async function (pi: ExtensionAPI) {
       api: OPENAI_CODEX_FAST_API,
       models: openAICodexFastModels,
       streamSimple: (model, context, options) =>
-        streamSimpleOpenAICodexFast(
-          authPath,
-          modelRegistry,
-          openAICodexModels,
-          model,
-          context,
-          options,
-        ),
+        streamSimpleOpenAICodexFast(modelRegistry, openAICodexModels, model, context, options),
     });
     providerRegistered = true;
   }
 
   pi.on("session_start", async (_event, ctx) => {
-    modelRegistry = ctx.modelRegistry;
     if (!providerRegistered && diagnostics.length === 0) {
-      await registerFastProviderIfReady();
+      await registerFastProviderIfReady(ctx.modelRegistry);
     }
     for (const diagnostic of diagnostics.splice(0)) {
       if (ctx.hasUI) {
@@ -343,6 +308,4 @@ export default async function (pi: ExtensionAPI) {
       await pi.setModel(fastModel);
     }
   });
-
-  await registerFastProviderIfReady(startupModelRuntime);
 }

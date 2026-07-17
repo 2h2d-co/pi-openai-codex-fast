@@ -84,16 +84,12 @@ interface CapturedNotification {
 }
 
 interface IntegrationSessionOptions {
+  bindExtensions?: boolean;
   codexBaseUrl?: string;
   compaction?: CompactionSettings;
   sessionManager?: SessionManager;
   sessionStartReason?: SessionStartEvent["reason"];
 }
-
-type IntegrationSession = CreateAgentSessionResult & {
-  agentDir: string;
-  cwd: string;
-};
 
 function base64Json(value: unknown): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
@@ -127,10 +123,6 @@ async function writeCodexAuth(agentDir: string, token = fakeCodexToken()): Promi
 
 async function setCodexCredential(credentials: CredentialStore): Promise<void> {
   await credentials.modify(CODEX_PROVIDER, async () => codexCredential());
-}
-
-async function clearCodexAuth(agentDir: string): Promise<void> {
-  await writeFile(join(agentDir, "auth.json"), "{}\n");
 }
 
 function responseCompleted(id: string, usage: UsageFixture = { input: 10, output: 5 }): SseEvent {
@@ -385,7 +377,7 @@ async function reloadResourceLoaderWithAgentDir(
 async function createIntegrationSession(
   t: TestContext,
   options: IntegrationSessionOptions = {},
-): Promise<IntegrationSession> {
+): Promise<CreateAgentSessionResult> {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-"));
   const cwd = join(tempRoot, "cwd");
   const agentDir = join(tempRoot, "agent");
@@ -439,7 +431,11 @@ async function createIntegrationSession(
   t.after(() => result.session.dispose());
 
   assert.deepEqual(result.extensionsResult.errors, []);
-  return { ...result, agentDir, cwd };
+  assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
+  if (options.bindExtensions !== false) {
+    await result.session.bindExtensions({});
+  }
+  return result;
 }
 
 async function selectFastModel(session: AgentSession, modelId = MODEL_ID): Promise<Model<Api>> {
@@ -484,7 +480,6 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   const agentDir = join(tempRoot, "agent");
   await mkdir(cwd, { recursive: true });
   await mkdir(agentDir, { recursive: true });
-  await clearCodexAuth(agentDir);
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
   const credentials = new InMemoryCredentialStore();
@@ -535,7 +530,6 @@ void test("loads extension disabled when built-in Codex auth is missing", async 
   assert.equal(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
   assert.ok(!result.session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
 
-  await writeCodexAuth(agentDir);
   await setCodexCredential(credentials);
   const retryConsoleErrors: string[] = [];
   console.error = (...args: unknown[]) => {
@@ -557,7 +551,6 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
   const agentDir = join(tempRoot, "agent");
   await mkdir(cwd, { recursive: true });
   await mkdir(agentDir, { recursive: true });
-  await clearCodexAuth(agentDir);
   t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
   const credentials = new InMemoryCredentialStore();
@@ -602,7 +595,6 @@ void test("drains disabled-load diagnostics and registers after auth is fixed fo
   assert.equal(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID), undefined);
   assert.equal(resourceLoader.getExtensions().runtime.pendingProviderRegistrations.length, 0);
 
-  await writeCodexAuth(agentDir);
   await setCodexCredential(credentials);
   // Reuse the loaded extension runtime so this proves the first session_start drained its
   // queued diagnostic instead of merely relying on a fresh extension instance.
@@ -785,10 +777,10 @@ void test("stores fast setup errors canonically without sending a provider reque
   const server = await startCodexServer(t, [
     { events: textResponseEvents("should not be requested") },
   ]);
-  const { session, agentDir } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
+  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
 
   await selectFastModel(session);
-  await clearCodexAuth(agentDir);
+  await session.modelRuntime.logout(CODEX_PROVIDER);
   await session.prompt("this should fail before fetch", { expandPromptTemplates: false });
 
   assert.equal(server.requests.length, 0);
@@ -815,6 +807,7 @@ void test("recovers fast mode through Pi session_start for every supported reaso
     sessionManager.appendMessage({ role: "user", content: "prior message", timestamp: Date.now() });
 
     const { session } = await createIntegrationSession(t, {
+      bindExtensions: false,
       sessionManager,
       sessionStartReason: reason,
     });
@@ -847,6 +840,7 @@ void test("does not recover fast mode when the latest overall model_change is no
     sessionManager.appendMessage({ role: "user", content: "latest branch", timestamp: Date.now() });
 
     const { session } = await createIntegrationSession(t, {
+      bindExtensions: false,
       sessionManager,
       sessionStartReason: "startup",
     });
