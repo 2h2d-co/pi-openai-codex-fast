@@ -62,8 +62,8 @@ openai-codex-fast/gpt-5.5
 
 ```bash
 npm install
-npm test # typecheck + integration tests for both direct TS loading and built JS
-npm run check
+npm run check # repository-wide hk quality gate
+npm test # integration tests for both direct TS loading and built JS
 npm run build
 npm run test:ts
 npm run test:js

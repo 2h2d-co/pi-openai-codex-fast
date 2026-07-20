@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Require Pi 0.80.10 through 0.80.x as the supported peer compatibility range.
+
 ## 0.0.10 - 2026-07-17
 
 - Update Pi dependencies to 0.80.10, use the session-scoped model registry for request auth, and migrate the SDK test harness to `ModelRuntime`.
