@@ -1,4 +1,4 @@
-amends "package://github.com/jdx/hk/releases/download/v1.51.0/hk@1.51.0#/Config.pkl"
+amends "package://github.com/jdx/hk/releases/download/v1.53.0/hk@1.53.0#/Config.pkl"
 
 import "package://github.com/2h2d-co/hk-config/releases/download/v0.2.2/hk-config@0.2.2#/Base.pkl" as Base
 import "package://github.com/2h2d-co/hk-config/releases/download/v0.2.2/hk-config@0.2.2#/GitHubActions.pkl" as GitHubActions
