@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.11 - 2026-08-01
+
 - Require Pi 0.83.x as the supported peer compatibility range.
 
 ## 0.0.10 - 2026-07-17
