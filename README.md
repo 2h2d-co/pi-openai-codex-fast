@@ -87,7 +87,7 @@ The build output is a local test artifact for verifying the extension also works
 Release flow:
 
 1. Create a release commit named `release: vX.Y.Z`.
-2. Tag that commit as `vX.Y.Z`.
+2. Create a lightweight tag for that commit with `git tag vX.Y.Z`; do not use `git tag -a`, `git tag -s`, `git tag -m`, or `cog bump --annotated`.
 3. Push `main` and the tag to GitHub.
 4. The tag push triggers GitHub Actions to stage the package on npm via trusted publishing with npm provenance.
 5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
