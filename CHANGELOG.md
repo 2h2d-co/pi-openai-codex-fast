@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- Require npm releases to match a locally built SHA-256 recorded in an SSH-signed release commit before trusted publishing can stage the package.
+
 ## 0.0.11 - 2026-08-01
 
 - Require Pi 0.83.x as the supported peer compatibility range.

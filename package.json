@@ -32,6 +32,7 @@
     "test": "npm run test:ts && npm run test:js",
     "test:ts": "node --test --test-concurrency=1 test/*.test.ts",
     "test:js": "npm run build && TEST_EXTENSION_PATH=dist/index.js node --test --test-concurrency=1 test/*.test.ts",
+    "release": "node scripts/release.ts",
     "fmt": "oxfmt",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
