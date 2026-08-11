@@ -630,15 +630,13 @@ async function main(): Promise<void> {
   console.log(`Turns per thinking level: ${TURNS_PER_LEVEL}`);
   console.log(`Thinking schedule per pass: ${LEVELS.join(", ")}`);
 
-  const benchmarkCases = LEVELS.map(
-    (level): BenchmarkCase => ({
-      name: level,
-      itemCount: ITEM_COUNT,
-      turns: TURNS_PER_LEVEL,
-      thinkingLevel: level,
-      systemPrompt: SYSTEM_PROMPT,
-    }),
-  );
+  const benchmarkCases = LEVELS.map((level): BenchmarkCase => ({
+    name: level,
+    itemCount: ITEM_COUNT,
+    turns: TURNS_PER_LEVEL,
+    thinkingLevel: level,
+    systemPrompt: SYSTEM_PROMPT,
+  }));
 
   for (const modelId of MODEL_IDS) {
     await benchmarkModel(modelId, benchmarkCases);

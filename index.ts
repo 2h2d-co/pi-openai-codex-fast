@@ -82,23 +82,19 @@ function getOpenAICodexFastModels(
 ): ProviderModelConfig[] {
   return openAICodexModels
     .filter((model) => OPENAI_CODEX_FAST_MODEL_IDS.has(model.id))
-    .map(
-      (model): ProviderModelConfig => ({
-        id: model.id,
-        name: model.name,
-        baseUrl: model.baseUrl,
-        reasoning: model.reasoning,
-        ...(model.thinkingLevelMap !== undefined
-          ? { thinkingLevelMap: model.thinkingLevelMap }
-          : {}),
-        input: model.input,
-        cost: model.cost,
-        contextWindow: model.contextWindow,
-        maxTokens: model.maxTokens,
-        ...(model.headers !== undefined ? { headers: model.headers } : {}),
-        ...(model.compat !== undefined ? { compat: model.compat } : {}),
-      }),
-    );
+    .map((model): ProviderModelConfig => ({
+      id: model.id,
+      name: model.name,
+      baseUrl: model.baseUrl,
+      reasoning: model.reasoning,
+      ...(model.thinkingLevelMap !== undefined ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
+      input: model.input,
+      cost: model.cost,
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxTokens,
+      ...(model.headers !== undefined ? { headers: model.headers } : {}),
+      ...(model.compat !== undefined ? { compat: model.compat } : {}),
+    }));
 }
 
 function getFastProviderBaseUrl(
