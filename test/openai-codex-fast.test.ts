@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test, type TestContext } from "node:test";
@@ -15,6 +16,7 @@ import {
   SettingsManager,
   type AgentSession,
   type CompactionSettings,
+  type CreateAgentSessionOptions,
   type CreateAgentSessionResult,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -52,7 +54,43 @@ const SESSION_START_REASONS: SessionStartEvent["reason"][] = [
 const AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
 const ACCOUNT_ID_CLAIM = "https://api.openai.com/auth";
 
-type SseEvent = Record<string, unknown>;
+type JsonPrimitive = boolean | null | number | string;
+
+type JsonValue = JsonObject | JsonPrimitive | JsonValue[];
+
+type JsonObject = {
+  [key: string]: JsonValue;
+};
+
+type SseEvent = JsonObject;
+
+type CompletedSseEvent = {
+  type: "response.completed";
+  response: {
+    id: string;
+    status: "completed";
+    service_tier: "default";
+    usage: {
+      input_tokens: number;
+      output_tokens: number;
+      total_tokens: number;
+      input_tokens_details: {
+        cached_tokens: 0;
+      };
+    };
+  };
+};
+
+type CodexModelsModule = {
+  getBuiltinModels: (provider: typeof CODEX_PROVIDER) => Model<typeof CODEX_API>[];
+};
+
+type PackageManifest = {
+  name: string;
+  pi: {
+    extensions: string[];
+  };
+};
 
 interface UsageFixture {
   input: number;
@@ -68,7 +106,7 @@ interface CapturedRequest {
   method: string | undefined;
   url: string | undefined;
   headers: IncomingHttpHeaders;
-  body: Record<string, unknown>;
+  body: JsonObject;
 }
 
 interface CodexTestServer {
@@ -84,7 +122,57 @@ interface IntegrationSessionOptions {
   sessionStartReason?: SessionStartEvent["reason"];
 }
 
-function base64Json(value: unknown): string {
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return typeof value === "object" && Object.values(value).every(isJsonValue);
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && isJsonValue(value) && value !== null && !Array.isArray(value);
+}
+
+function parseJsonObject(value: string): JsonObject {
+  const parsed: unknown = JSON.parse(value);
+  if (!isJsonObject(parsed)) {
+    throw new Error("Expected a JSON object.");
+  }
+  return parsed;
+}
+
+function isAddressInfo(value: AddressInfo | string | null): value is AddressInfo {
+  return typeof value === "object" && value !== null;
+}
+
+function isCodexModelsModule(value: unknown): value is CodexModelsModule {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "getBuiltinModels" in value &&
+    typeof value.getBuiltinModels === "function"
+  );
+}
+
+function isPackageManifest(value: unknown): value is PackageManifest {
+  if (!isJsonObject(value) || !isString(value["name"]) || !isJsonObject(value["pi"])) {
+    return false;
+  }
+  const extensions = value["pi"]["extensions"];
+  return Array.isArray(extensions) && extensions.every(isString);
+}
+
+function base64Json(value: JsonValue): string {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64");
 }
 
@@ -114,7 +202,10 @@ async function writeCodexAuth(agentDir: string, token = fakeCodexToken()): Promi
   );
 }
 
-function responseCompleted(id: string, usage: UsageFixture = { input: 10, output: 5 }): SseEvent {
+function responseCompleted(
+  id: string,
+  usage: UsageFixture = { input: 10, output: 5 },
+): CompletedSseEvent {
   return {
     type: "response.completed",
     response: {
@@ -228,10 +319,10 @@ async function startCodexServer(
     const rawBody = contentEncodings.includes("zstd")
       ? zstdDecompressSync(bodyBuffer).toString("utf8")
       : bodyBuffer.toString("utf8");
-    const body = rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+    const body = rawBody ? parseJsonObject(rawBody) : {};
     requests.push({ method: req.method, url: req.url, headers: req.headers, body });
 
-    const isModelRequest = typeof body["model"] === "string";
+    const isModelRequest = isString(body["model"]);
     const batch = isModelRequest
       ? (responseBatches[Math.min(requestIndex, responseBatches.length - 1)] ?? {})
       : {};
@@ -261,7 +352,7 @@ async function startCodexServer(
   );
 
   const address = server.address();
-  assert.ok(address && typeof address === "object");
+  assert.ok(isAddressInfo(address));
   return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
@@ -274,11 +365,10 @@ async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<voi
   );
 
   try {
-    const nestedPiAi = (await import(pathToFileURL(nestedPiAiPath).href)) as {
-      getBuiltinModels?: (provider: typeof CODEX_PROVIDER) => Model<typeof CODEX_API>[];
-    };
-    if (nestedPiAi.getBuiltinModels) {
-      getCodexModels.push(() => nestedPiAi.getBuiltinModels!(CODEX_PROVIDER));
+    const nestedPiAi: unknown = await import(pathToFileURL(nestedPiAiPath).href);
+    if (isCodexModelsModule(nestedPiAi)) {
+      const getNestedModels = nestedPiAi.getBuiltinModels;
+      getCodexModels.push(() => getNestedModels(CODEX_PROVIDER));
     }
   } catch {
     // No nested Pi AI copy is installed in this dependency layout.
@@ -363,7 +453,7 @@ async function createIntegrationSession(
   const initialModel = modelRuntime.getModel(CODEX_PROVIDER, MODEL_ID);
   assert.ok(initialModel, `Expected built-in ${CODEX_PROVIDER}/${MODEL_ID} to exist`);
 
-  const result = await createAgentSession({
+  const sessionOptions: CreateAgentSessionOptions = {
     cwd,
     agentDir,
     modelRuntime,
@@ -373,12 +463,14 @@ async function createIntegrationSession(
     model: initialModel,
     thinkingLevel: "off",
     noTools: "all",
-    ...(options.sessionStartReason
-      ? {
-          sessionStartEvent: { type: "session_start", reason: options.sessionStartReason } as const,
-        }
-      : {}),
-  });
+  };
+  if (options.sessionStartReason) {
+    sessionOptions.sessionStartEvent = {
+      type: "session_start",
+      reason: options.sessionStartReason,
+    };
+  }
+  const result = await createAgentSession(sessionOptions);
   t.after(() => result.session.dispose());
 
   assert.deepEqual(result.extensionsResult.errors, []);
@@ -416,13 +508,11 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
 }
 
 void test("package manifest keeps npm package name while loading the top-level extension path", async () => {
-  const packageJson = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8")) as {
-    name?: string;
-    pi?: { extensions?: string[] };
-  };
+  const packageJson: unknown = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
+  assert.ok(isPackageManifest(packageJson));
 
   assert.equal(packageJson.name, "pi-openai-codex-fast");
-  assert.deepEqual(packageJson.pi?.extensions, ["./index.ts"]);
+  assert.deepEqual(packageJson.pi.extensions, ["./index.ts"]);
 });
 
 void test("registers fast models before session_start without requiring Codex auth", async (t) => {

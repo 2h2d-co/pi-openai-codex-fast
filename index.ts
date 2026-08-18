@@ -14,6 +14,7 @@ import {
   type AssistantMessage,
   type Context,
   type Model,
+  type OpenAICodexResponsesOptions,
   type SimpleStreamOptions,
 } from "@earendil-works/pi-ai/compat";
 
@@ -82,19 +83,28 @@ function getOpenAICodexFastModels(
 ): ProviderModelConfig[] {
   return openAICodexModels
     .filter((model) => OPENAI_CODEX_FAST_MODEL_IDS.has(model.id))
-    .map((model): ProviderModelConfig => ({
-      id: model.id,
-      name: model.name,
-      baseUrl: model.baseUrl,
-      reasoning: model.reasoning,
-      ...(model.thinkingLevelMap !== undefined ? { thinkingLevelMap: model.thinkingLevelMap } : {}),
-      input: model.input,
-      cost: model.cost,
-      contextWindow: model.contextWindow,
-      maxTokens: model.maxTokens,
-      ...(model.headers !== undefined ? { headers: model.headers } : {}),
-      ...(model.compat !== undefined ? { compat: model.compat } : {}),
-    }));
+    .map((model): ProviderModelConfig => {
+      const config: ProviderModelConfig = {
+        id: model.id,
+        name: model.name,
+        baseUrl: model.baseUrl,
+        reasoning: model.reasoning,
+        input: model.input,
+        cost: model.cost,
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens,
+      };
+      if (model.thinkingLevelMap !== undefined) {
+        config.thinkingLevelMap = model.thinkingLevelMap;
+      }
+      if (model.headers !== undefined) {
+        config.headers = model.headers;
+      }
+      if (model.compat !== undefined) {
+        config.compat = model.compat;
+      }
+      return config;
+    });
 }
 
 function getFastProviderBaseUrl(
@@ -200,12 +210,15 @@ function streamSimpleOpenAICodexFast(
         ? clampThinkingLevel(codexModel, options.reasoning)
         : undefined;
       const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-      const inner = streamOpenAICodexResponses(codexModel, context, {
+      const requestOptions: OpenAICodexResponsesOptions = {
         ...options,
         apiKey: auth.value,
         serviceTier: "priority",
-        ...(reasoningEffort ? { reasoningEffort } : {}),
-      });
+      };
+      if (reasoningEffort) {
+        requestOptions.reasoningEffort = reasoningEffort;
+      }
+      const inner = streamOpenAICodexResponses(codexModel, context, requestOptions);
 
       for await (const event of inner) {
         if (event.type === "error" && isContextOverflow(event.error, model.contextWindow)) {

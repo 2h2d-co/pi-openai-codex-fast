@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-type JsonRecord = Record<string, unknown>;
+type JsonPrimitive = boolean | null | number | string;
+
+type JsonValue = JsonObject | JsonPrimitive | JsonValue[];
+
+type JsonObject = {
+  [key: string]: JsonValue;
+};
 
 type PackFile = {
   path: string;
@@ -188,8 +194,8 @@ async function validatePackage(
 
   const manifestPath = join(source, packageDirectory, "package.json");
   const manifest = parseJsonRecord(await readFile(manifestPath, "utf8"));
-  const scripts = isJsonRecord(manifest["scripts"]) ? manifest["scripts"] : {};
-  const forbidden = forbiddenInstallScripts.filter((script) => typeof scripts[script] === "string");
+  const scripts = isJsonObject(manifest["scripts"]) ? manifest["scripts"] : {};
+  const forbidden = forbiddenInstallScripts.filter((script) => isString(scripts[script]));
   if (forbidden.length > 0) {
     throw new Error(`Install lifecycle scripts are forbidden: ${forbidden.join(", ")}`);
   }
@@ -216,34 +222,10 @@ async function readExpectedPackageFiles(): Promise<string[]> {
 
 function parsePackResult(output: string): PackResult {
   const parsed: unknown = JSON.parse(output);
-  if (!Array.isArray(parsed) || parsed.length !== 1 || !isJsonRecord(parsed[0])) {
+  if (!Array.isArray(parsed) || parsed.length !== 1 || !isPackResult(parsed[0])) {
     throw new Error("npm pack did not report exactly one package.");
   }
-  const result = parsed[0];
-  if (
-    typeof result["filename"] !== "string" ||
-    typeof result["name"] !== "string" ||
-    typeof result["version"] !== "string" ||
-    !Array.isArray(result["files"])
-  ) {
-    throw new Error("npm pack returned invalid package metadata.");
-  }
-  const files = result["files"].map((value) => {
-    if (
-      !isJsonRecord(value) ||
-      typeof value["path"] !== "string" ||
-      typeof value["mode"] !== "number"
-    ) {
-      throw new Error("npm pack returned invalid file metadata.");
-    }
-    return { path: value["path"], mode: value["mode"] };
-  });
-  return {
-    filename: result["filename"],
-    files,
-    name: result["name"],
-    version: result["version"],
-  };
+  return parsed[0];
 }
 
 function verifyReleaseCommit(commit: string, releaseTag: string, digest: string): void {
@@ -312,16 +294,48 @@ function run(command: string, args: string[], cwd: string, capture: boolean): st
   return capture ? result.stdout.trim() : "";
 }
 
-function parseJsonRecord(value: string): JsonRecord {
+function parseJsonRecord(value: string): JsonObject {
   const parsed: unknown = JSON.parse(value);
-  if (!isJsonRecord(parsed)) {
+  if (!isJsonObject(parsed)) {
     throw new Error("Expected a JSON object.");
   }
   return parsed;
 }
 
-function isJsonRecord(value: unknown): value is JsonRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return typeof value === "object" && Object.values(value).every(isJsonValue);
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && isJsonValue(value) && value !== null && !Array.isArray(value);
+}
+
+function isPackFile(value: unknown): value is PackFile {
+  return isJsonObject(value) && isString(value["path"]) && typeof value["mode"] === "number";
+}
+
+function isPackResult(value: unknown): value is PackResult {
+  return (
+    isJsonObject(value) &&
+    isString(value["filename"]) &&
+    isString(value["name"]) &&
+    isString(value["version"]) &&
+    Array.isArray(value["files"]) &&
+    value["files"].every(isPackFile)
+  );
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
 function isSemver(value: string): boolean {

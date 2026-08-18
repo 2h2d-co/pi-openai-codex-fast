@@ -36,6 +36,11 @@ type AssistantMessage = {
   usage?: Partial<NormalizedUsage> & { cost?: Partial<NormalizedUsage["cost"]> };
   stopReason?: string;
 };
+type JsonPrimitive = boolean | null | number | string;
+type JsonValue = JsonObject | JsonPrimitive | JsonValue[];
+type JsonObject = {
+  [key: string]: JsonValue;
+};
 type JsonEvent = {
   type?: string;
   message?: AssistantMessage;
@@ -119,6 +124,78 @@ type Report = {
   summary: AggregateSummary;
 };
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOptionalNumber(value: unknown): value is number | undefined {
+  return value === undefined || typeof value === "number";
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isJsonValue(value: unknown): value is JsonValue {
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "number" ||
+    typeof value === "string"
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return typeof value === "object" && Object.values(value).every(isJsonValue);
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return typeof value === "object" && isJsonValue(value) && value !== null && !Array.isArray(value);
+}
+
+function isContentBlock(value: unknown): value is ContentBlock {
+  return (
+    isJsonObject(value) && typeof value["type"] === "string" && isOptionalString(value["text"])
+  );
+}
+
+function isNormalizedUsage(value: unknown): value is AssistantMessage["usage"] {
+  if (!isJsonObject(value)) return false;
+  const cost = value["cost"];
+  return (
+    isOptionalNumber(value["input"]) &&
+    isOptionalNumber(value["output"]) &&
+    isOptionalNumber(value["cacheRead"]) &&
+    isOptionalNumber(value["cacheWrite"]) &&
+    isOptionalNumber(value["totalTokens"]) &&
+    (cost === undefined || (isJsonObject(cost) && isOptionalNumber(cost["total"])))
+  );
+}
+
+function isAssistantMessage(value: unknown): value is AssistantMessage {
+  if (!isJsonObject(value)) return false;
+  const content = value["content"];
+  const usage = value["usage"];
+  return (
+    isOptionalString(value["role"]) &&
+    (content === undefined || (Array.isArray(content) && content.every(isContentBlock))) &&
+    (usage === undefined || isNormalizedUsage(usage)) &&
+    isOptionalString(value["stopReason"])
+  );
+}
+
+function isJsonEvent(value: unknown): value is JsonEvent {
+  if (!isJsonObject(value)) return false;
+  const message = value["message"];
+  const assistantMessageEvent = value["assistantMessageEvent"];
+  return (
+    isOptionalString(value["type"]) &&
+    (message === undefined || isAssistantMessage(message)) &&
+    (assistantMessageEvent === undefined ||
+      (isJsonObject(assistantMessageEvent) && isOptionalString(assistantMessageEvent["type"])))
+  );
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT = join(__dirname, "..");
@@ -200,7 +277,7 @@ function buildTrial(benchmarkCase: BenchmarkCase, turn: number): Trial {
 }
 
 function round(value: number | null | undefined, digits = 2): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (!isFiniteNumber(value)) return null;
   return Number(value.toFixed(digits));
 }
 
@@ -210,9 +287,7 @@ function formatMetric(value: number | null | undefined, digits = 2, suffix = "")
 }
 
 function finiteNumbers(values: Array<number | null | undefined>): number[] {
-  return values.filter(
-    (value): value is number => typeof value === "number" && Number.isFinite(value),
-  );
+  return values.filter(isFiniteNumber);
 }
 
 function average(values: Array<number | null | undefined>): number | null {
@@ -248,8 +323,7 @@ function percentChange(
   from: number | null | undefined,
   to: number | null | undefined,
 ): number | null {
-  if (typeof from !== "number" || typeof to !== "number") return null;
-  if (!Number.isFinite(from) || from === 0 || !Number.isFinite(to)) return null;
+  if (!isFiniteNumber(from) || !isFiniteNumber(to) || from === 0) return null;
   return ((to - from) / from) * 100;
 }
 
@@ -337,12 +411,14 @@ function runPiOnce(
 
     const stdoutReader = readline.createInterface({ input: child.stdout! });
     stdoutReader.on("line", (line: string) => {
-      let event: JsonEvent;
+      let parsed: unknown;
       try {
-        event = JSON.parse(line) as JsonEvent;
+        parsed = JSON.parse(line);
       } catch {
         return;
       }
+      if (!isJsonEvent(parsed)) return;
+      const event = parsed;
       const elapsedMs = performance.now() - start;
       if (event.type === "message_update" && event.message?.role === "assistant") {
         if (firstAssistantUpdateMs === null) firstAssistantUpdateMs = elapsedMs;
