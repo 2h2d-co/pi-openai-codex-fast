@@ -747,6 +747,8 @@ const handledBenchmarkRun = benchmarkRun.catch((error: unknown) => {
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
 });
-void handledBenchmarkRun.finally(() => {
+try {
+  await handledBenchmarkRun;
+} finally {
   rmSync(TEMP_BIN, { force: true, recursive: true });
-});
+}

@@ -343,7 +343,7 @@ async function startCodexServer(
       res.end(sse(batch.events ?? []));
     };
     // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- Destroying the response forwards request-processing failures to the test client.
-    void request().catch((error: unknown) => {
+    request().catch((error: unknown) => {
       res.destroy(error instanceof Error ? error : new Error(String(error)));
     });
   });
@@ -521,7 +521,7 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
   }
 }
 
-void test("package manifest keeps npm package name while loading the top-level extension path", async () => {
+test("package manifest keeps npm package name while loading the top-level extension path", async () => {
   const packageJson: unknown = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
   assert.ok(isPackageManifest(packageJson));
 
@@ -529,7 +529,7 @@ void test("package manifest keeps npm package name while loading the top-level e
   assert.deepEqual(packageJson.pi.extensions, ["./index.ts"]);
 });
 
-void test("registers fast models before session_start without requiring Codex auth", async (t) => {
+test("registers fast models before session_start without requiring Codex auth", async (t) => {
   const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-auth-"));
   const cwd = join(tempRoot, "cwd");
   const agentDir = join(tempRoot, "agent");
@@ -582,7 +582,7 @@ void test("registers fast models before session_start without requiring Codex au
   assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
 });
 
-void test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
+test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
   const { session } = await createIntegrationSession(t);
   const fastModels = session.modelRuntime
     .getModels(FAST_PROVIDER)
@@ -595,7 +595,7 @@ void test("loads through Pi's resource loader and registers a real fast provider
   assert.equal(session.extensionRunner.hasHandlers("session_tree"), false);
 });
 
-void test("runs a real Pi prompt through fast Codex as priority while storing canonical assistant history", async (t) => {
+test("runs a real Pi prompt through fast Codex as priority while storing canonical assistant history", async (t) => {
   const server = await startCodexServer(t, [{ events: textResponseEvents("fast ok") }]);
   const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
 
@@ -626,7 +626,7 @@ void test("runs a real Pi prompt through fast Codex as priority while storing ca
   assert.ok(!session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
 });
 
-void test("remaps fast context overflow errors and lets Pi compact and retry", async (t) => {
+test("remaps fast context overflow errors and lets Pi compact and retry", async (t) => {
   const server = await startCodexServer(t, [
     { events: textResponseEvents("seed ok", "resp_seed") },
     { events: contextOverflowResponseEvents() },
@@ -698,7 +698,7 @@ void test("remaps fast context overflow errors and lets Pi compact and retry", a
   assert.equal(content.text, "recovered after compaction");
 });
 
-void test("stores tool-calling fast replies canonically through the real Pi agent loop", async (t) => {
+test("stores tool-calling fast replies canonically through the real Pi agent loop", async (t) => {
   const server = await startCodexServer(t, [
     { events: toolCallResponseEvents() },
     { events: textResponseEvents("tool follow-up complete", "resp_after_tool") },
@@ -731,7 +731,7 @@ void test("stores tool-calling fast replies canonically through the real Pi agen
   assertCanonicalAssistantMessages(session);
 });
 
-void test("stores fast setup errors canonically without sending a provider request", async (t) => {
+test("stores fast setup errors canonically without sending a provider request", async (t) => {
   const server = await startCodexServer(t, [
     { events: textResponseEvents("should not be requested") },
   ]);
@@ -753,7 +753,7 @@ void test("stores fast setup errors canonically without sending a provider reque
   assert.match(message.errorMessage, /No openai-codex auth found/);
 });
 
-void test("recovers fast mode through Pi session_start for every supported reason", async (t) => {
+test("recovers fast mode through Pi session_start for every supported reason", async (t) => {
   for (const reason of SESSION_START_REASONS) {
     const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-recovery-"));
     const cwd = join(tempRoot, "cwd");
@@ -777,7 +777,7 @@ void test("recovers fast mode through Pi session_start for every supported reaso
   }
 });
 
-void test("does not recover fast mode when the latest overall model_change is not fast", async (t) => {
+test("does not recover fast mode when the latest overall model_change is not fast", async (t) => {
   for (const provider of [CODEX_PROVIDER, "anthropic"]) {
     const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-recovery-"));
     const cwd = join(tempRoot, "cwd");

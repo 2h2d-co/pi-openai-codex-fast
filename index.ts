@@ -180,71 +180,73 @@ function streamSimpleOpenAICodexFast(
 ) {
   const outer = createAssistantMessageEventStream();
 
-  void (async () => {
-    try {
-      const codexModel = openAICodexModels.find((m) => m.id === model.id);
-      if (!codexModel) {
-        endWithCanonicalError(
-          outer,
-          model.id,
-          `Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`,
-          options,
-        );
-        return;
-      }
-
-      if (!modelRegistry) {
-        endWithCanonicalError(
-          outer,
-          model.id,
-          `${OPENAI_CODEX_FAST_PROVIDER} session is not initialized.`,
-          options,
-        );
-        return;
-      }
-
-      const auth = await getOpenAICodexAuth(modelRegistry, codexModel);
-      if (!auth.ok) {
-        endWithCanonicalError(outer, model.id, auth.diagnostic.message, options);
-        return;
-      }
-
-      const clampedReasoning = options?.reasoning
-        ? clampThinkingLevel(codexModel, options.reasoning)
-        : undefined;
-      const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
-      const requestOptions: OpenAICodexResponsesOptions = {
-        ...options,
-        apiKey: auth.value,
-        serviceTier: "priority",
-      };
-      if (reasoningEffort) {
-        requestOptions.reasoningEffort = reasoningEffort;
-      }
-      const inner = streamOpenAICodexResponses(codexModel, context, requestOptions);
-
-      for await (const event of inner) {
-        if (event.type === "error" && isContextOverflow(event.error, model.contextWindow)) {
-          outer.push({
-            ...event,
-            error: {
-              ...event.error,
-              provider: OPENAI_CODEX_FAST_PROVIDER,
-              model: model.id,
-            },
-          });
-        } else {
-          outer.push(event);
-        }
-      }
-      outer.end();
-    } catch (error) {
-      if (!(error instanceof Error)) {
-        throw error;
-      }
-      endWithCanonicalError(outer, model.id, error.message, options);
+  const streamTask = (async () => {
+    const codexModel = openAICodexModels.find((m) => m.id === model.id);
+    if (!codexModel) {
+      endWithCanonicalError(
+        outer,
+        model.id,
+        `Underlying ${OPENAI_CODEX_PROVIDER} model not found for ${model.id}.`,
+        options,
+      );
+      return;
     }
+
+    if (!modelRegistry) {
+      endWithCanonicalError(
+        outer,
+        model.id,
+        `${OPENAI_CODEX_FAST_PROVIDER} session is not initialized.`,
+        options,
+      );
+      return;
+    }
+
+    const auth = await getOpenAICodexAuth(modelRegistry, codexModel);
+    if (!auth.ok) {
+      endWithCanonicalError(outer, model.id, auth.diagnostic.message, options);
+      return;
+    }
+
+    const clampedReasoning = options?.reasoning
+      ? clampThinkingLevel(codexModel, options.reasoning)
+      : undefined;
+    const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
+    const requestOptions: OpenAICodexResponsesOptions = {
+      ...options,
+      apiKey: auth.value,
+      serviceTier: "priority",
+    };
+    if (reasoningEffort) {
+      requestOptions.reasoningEffort = reasoningEffort;
+    }
+    const inner = streamOpenAICodexResponses(codexModel, context, requestOptions);
+
+    for await (const event of inner) {
+      if (event.type === "error" && isContextOverflow(event.error, model.contextWindow)) {
+        outer.push({
+          ...event,
+          error: {
+            ...event.error,
+            provider: OPENAI_CODEX_FAST_PROVIDER,
+            model: model.id,
+          },
+        });
+      } else {
+        outer.push(event);
+      }
+    }
+    outer.end();
   })();
+  // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The stream boundary converts task failure into the terminal provider error event.
+  streamTask.catch((error: unknown) => {
+    endWithCanonicalError(
+      outer,
+      model.id,
+      error instanceof Error ? error.message : String(error),
+      options,
+    );
+  });
 
   return outer;
 }

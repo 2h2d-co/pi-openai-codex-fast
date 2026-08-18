@@ -6,6 +6,10 @@
 
 - Adopt the shared 2h2d Oxlint policy, including the blanket ban on non-const type assertions.
 
+### Fixed
+
+- Convert every detached fast-provider task failure, including non-Error rejections, into a canonical terminal stream error.
+
 ### Security
 
 - Require npm releases to match a locally built SHA-256 recorded in an SSH-signed release commit before trusted publishing can stage the package.
