@@ -71,9 +71,12 @@ async function getOpenAICodexAuth(
       },
     };
   } catch (error) {
+    if (!(error instanceof Error)) {
+      throw error;
+    }
     return {
       ok: false,
-      diagnostic: authFailedDiagnostic(error instanceof Error ? error.message : String(error)),
+      diagnostic: authFailedDiagnostic(error.message),
     };
   }
 }
@@ -236,12 +239,10 @@ function streamSimpleOpenAICodexFast(
       }
       outer.end();
     } catch (error) {
-      endWithCanonicalError(
-        outer,
-        model.id,
-        error instanceof Error ? error.message : String(error),
-        options,
-      );
+      if (!(error instanceof Error)) {
+        throw error;
+      }
+      endWithCanonicalError(outer, model.id, error.message, options);
     }
   })();
 

@@ -203,10 +203,11 @@ const DEFAULT_MODEL_IDS = ["gpt-5.6-terra", "gpt-5.6-sol"];
 
 function parseModelIds(args: string[]): string[] {
   if (args.length === 0) return DEFAULT_MODEL_IDS;
-  if (args.length === 1 && !args[0]!.startsWith("-")) return [args[0]!];
-  if (args.length === 2 && args[0] === "--model" && args[1]) return [args[1]];
-  if (args.length === 1 && args[0]!.startsWith("--model=")) {
-    const modelId = args[0]!.slice("--model=".length);
+  const [firstArg, secondArg] = args;
+  if (args.length === 1 && firstArg !== undefined && !firstArg.startsWith("-")) return [firstArg];
+  if (args.length === 2 && firstArg === "--model" && secondArg) return [secondArg];
+  if (args.length === 1 && firstArg?.startsWith("--model=")) {
+    const modelId = firstArg.slice("--model=".length);
     if (modelId) return [modelId];
   }
   throw new Error("Usage: npm run benchmark --model <model-id>");
@@ -252,10 +253,13 @@ function labelLines(caseName: string, itemCount: number, turn: number): string[]
 
 function scrambleLabels(labels: string[], turn: number): string[] {
   const step = labels.length - 1;
-  return Array.from(
-    { length: labels.length },
-    (_, index) => labels[(index * step + turn) % labels.length]!,
-  );
+  return Array.from({ length: labels.length }, (_, index) => {
+    const label = labels[(index * step + turn) % labels.length];
+    if (label === undefined) {
+      throw new Error("Label index is outside the source array.");
+    }
+    return label;
+  });
 }
 
 function buildSorterPrompt(sortedLabels: string[], turn: number): string {
@@ -300,8 +304,16 @@ function median(values: Array<number | null | undefined>): number | null {
   const sorted = finiteNumbers(values).sort((a, b) => a - b);
   if (sorted.length === 0) return null;
   const middle = Math.floor(sorted.length / 2);
-  if (sorted.length % 2 === 1) return sorted[middle]!;
-  return (sorted[middle - 1]! + sorted[middle]!) / 2;
+  const upper = sorted[middle];
+  if (upper === undefined) {
+    throw new Error("Median index is outside the sorted values.");
+  }
+  if (sorted.length % 2 === 1) return upper;
+  const lower = sorted[middle - 1];
+  if (lower === undefined) {
+    throw new Error("Lower median index is outside the sorted values.");
+  }
+  return (lower + upper) / 2;
 }
 
 function standardDeviation(values: Array<number | null | undefined>): number | null {
@@ -409,12 +421,22 @@ function runPiOnce(
     let assistantMessage: AssistantMessage | null = null;
     let stderr = "";
 
-    const stdoutReader = readline.createInterface({ input: child.stdout! });
+    const { stdout, stderr: stderrStream } = child;
+    if (stdout === null || stderrStream === null) {
+      child.kill();
+      reject(new Error("Pi benchmark process did not expose its piped output streams."));
+      return;
+    }
+
+    const stdoutReader = readline.createInterface({ input: stdout });
     stdoutReader.on("line", (line: string) => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(line);
-      } catch {
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) {
+          throw error;
+        }
         return;
       }
       if (!isJsonEvent(parsed)) return;
@@ -435,7 +457,7 @@ function runPiOnce(
       }
     });
 
-    child.stderr!.on("data", (chunk: Buffer) => {
+    stderrStream.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
 
@@ -719,11 +741,12 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.stack || error.message : String(error));
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    rmSync(TEMP_BIN, { force: true, recursive: true });
-  });
+const benchmarkRun = main();
+// oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The terminal handler reports the failure and sets the process exit code.
+const handledBenchmarkRun = benchmarkRun.catch((error: unknown) => {
+  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  process.exitCode = 1;
+});
+void handledBenchmarkRun.finally(() => {
+  rmSync(TEMP_BIN, { force: true, recursive: true });
+});
