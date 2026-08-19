@@ -238,7 +238,6 @@ function streamSimpleOpenAICodexFast(
     }
     outer.end();
   })();
-  // oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The stream boundary converts task failure into the terminal provider error event.
   streamTask.catch((error: unknown) => {
     endWithCanonicalError(
       outer,
