@@ -742,7 +742,6 @@ async function main(): Promise<void> {
 }
 
 const benchmarkRun = main();
-// oxlint-disable-next-line 2h2d/no-silent-error-suppression -- The terminal handler reports the failure and sets the process exit code.
 const handledBenchmarkRun = benchmarkRun.catch((error: unknown) => {
   console.error(error instanceof Error ? error.stack || error.message : String(error));
   process.exitCode = 1;
