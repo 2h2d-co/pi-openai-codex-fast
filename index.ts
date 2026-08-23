@@ -1,8 +1,8 @@
-import {
-  type ExtensionAPI,
-  type ModelChangeEntry,
-  type ModelRegistry,
-  type ProviderModelConfig,
+import type {
+  ExtensionAPI,
+  ModelChangeEntry,
+  ModelRegistry,
+  ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import {
   clampThinkingLevel,

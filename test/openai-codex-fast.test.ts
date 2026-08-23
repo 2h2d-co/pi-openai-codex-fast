@@ -20,12 +20,7 @@ import {
   type CreateAgentSessionResult,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
-import {
-  type Api,
-  type AssistantMessage,
-  type Credential,
-  type Model,
-} from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
