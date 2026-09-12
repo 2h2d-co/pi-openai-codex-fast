@@ -24,6 +24,7 @@ const OPENAI_CODEX_FAST_PROVIDER = "openai-codex-fast";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const PLACEHOLDER_API_KEY = "__openai_codex_fast_reuses_openai_codex_auth__";
 const OPENAI_CODEX_FAST_MODEL_IDS = new Set([
+  "gpt-6-astra",
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
@@ -81,7 +82,7 @@ async function getOpenAICodexAuth(
   }
 }
 
-function getOpenAICodexFastModels(
+export function getOpenAICodexFastModels(
   openAICodexModels: readonly Model<OpenAICodexApi>[],
 ): ProviderModelConfig[] {
   return openAICodexModels

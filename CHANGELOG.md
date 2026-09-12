@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add `gpt-6-astra` to the priority-tier fast provider when it is available in Pi's built-in Codex model catalog.
+
 ### Changed
 
 - Adopt the shared 2h2d Oxlint policy, including the blanket ban on non-const type assertions.
