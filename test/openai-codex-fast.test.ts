@@ -34,6 +34,7 @@ const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
 const ASTRA_MODEL_ID = "gpt-6-astra";
 const FAST_MODEL_IDS = [
+  ASTRA_MODEL_ID,
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.5",
@@ -594,7 +595,11 @@ test("loads through Pi's resource loader and registers a real fast provider", as
     .getModels(FAST_PROVIDER)
     .filter((model) => model.provider === FAST_PROVIDER);
 
-  assert.deepEqual(fastModels.map((model) => model.id).sort(), [...FAST_MODEL_IDS].sort());
+  const builtinCodexModelIds = new Set(getBuiltinModels(CODEX_PROVIDER).map((model) => model.id));
+  const expectedFastModelIds = FAST_MODEL_IDS.filter((modelId) =>
+    builtinCodexModelIds.has(modelId),
+  );
+  assert.deepEqual(fastModels.map((model) => model.id).sort(), expectedFastModelIds.sort());
   assert.ok(fastModels.every((model) => model.api === FAST_API));
   assert.ok(!fastModels.some((model) => model.id === "gpt-5.2"));
   assert.equal(session.extensionRunner.hasHandlers("session_start"), true);
