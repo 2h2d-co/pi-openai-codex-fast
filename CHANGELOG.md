@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.12 - 2026-09-14
+
 ### Added
 
 - Add priority-tier Codex requests for `gpt-6-astra`.
@@ -19,7 +21,7 @@
 
 - Require npm releases to match a locally built SHA-256 recorded in an SSH-signed release commit before trusted publishing can stage the package.
 - Require code-owner review for release policy, protect `main` and `v*` refs, and gate npm OIDC behind a reviewed tag-only environment.
-- Updated the Pi AI and coding-agent development dependencies and peer ranges to 0.84.x, including patched transitive HTTP and glob dependencies.
+- Update transitive HTTP and glob dependencies to patched releases through the Pi 0.84.x development dependency update.
 
 ## 0.0.11 - 2026-08-01
 
