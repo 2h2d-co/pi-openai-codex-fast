@@ -583,11 +583,7 @@ test("loads through Pi's resource loader and registers a real fast provider", as
     .getModels(FAST_PROVIDER)
     .filter((model) => model.provider === FAST_PROVIDER);
 
-  const builtinCodexModelIds = new Set(getBuiltinModels(CODEX_PROVIDER).map((model) => model.id));
-  const expectedFastModelIds = FAST_MODEL_IDS.filter((modelId) =>
-    builtinCodexModelIds.has(modelId),
-  );
-  assert.deepEqual(fastModels.map((model) => model.id).sort(), expectedFastModelIds.sort());
+  assert.deepEqual(fastModels.map((model) => model.id).sort(), [...FAST_MODEL_IDS].sort());
   assert.ok(fastModels.every((model) => model.api === FAST_API));
   assert.ok(!fastModels.some((model) => model.id === "gpt-5.2"));
   assert.equal(session.extensionRunner.hasHandlers("session_start"), true);

@@ -6,7 +6,7 @@ Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-
 
 `openai-codex-fast` is a separate selectable provider that delegates to Pi's built-in `openai-codex` implementation with the same model id and `serviceTier: "priority"`. Normal `openai-codex/<modelId>` selections are left on the normal/default-tier path.
 
-Currently exposed fast models (when available from Pi's built-in `openai-codex` catalog):
+Currently exposed fast models:
 
 - `gpt-6-astra`
 - `gpt-5.6-luna`

@@ -4,7 +4,7 @@
 
 ### Added
 
-- Add `gpt-6-astra` to the priority-tier fast provider when it is available in Pi's built-in Codex model catalog.
+- Add priority-tier Codex requests for `gpt-6-astra`.
 
 ### Changed
 
