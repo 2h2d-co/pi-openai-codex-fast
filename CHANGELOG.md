@@ -5,6 +5,7 @@
 ### Changed
 
 - Adopt the shared 2h2d Oxlint policy, including the blanket ban on non-const type assertions.
+- Require Pi 0.85.1 or later within 0.85.x as the supported peer compatibility range.
 
 ### Fixed
 
