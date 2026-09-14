@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Add priority-tier Codex requests for `gpt-6-astra`.
+
 ### Changed
 
 - Adopt the shared 2h2d Oxlint policy, including the blanket ban on non-const type assertions.

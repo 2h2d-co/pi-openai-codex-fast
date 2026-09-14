@@ -32,6 +32,7 @@ const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
 const FAST_MODEL_IDS = [
+  "gpt-6-astra",
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.5",

@@ -8,6 +8,7 @@ Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-
 
 Currently exposed fast models:
 
+- `gpt-6-astra`
 - `gpt-5.6-luna`
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
