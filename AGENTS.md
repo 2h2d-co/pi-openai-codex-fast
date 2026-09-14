@@ -7,6 +7,7 @@ pi-openai-codex-fast is a Pi coding agent extension for exposing OpenAI Codex mo
 - Format commit messages according to [Conventional Commits](https://www.conventionalcommits.org/).
 - Maintain `CHANGELOG.md` using the [Keep a Changelog](https://keepachangelog.com/) style.
 - Add changelog entries for changes whose commit would be `feat:` or `fix:`; keep entries under `Unreleased` until a release is made.
+- Credit external contributors in their changelog entry with a GitHub profile link and pull request link, for example `Contributed by [@user](https://github.com/user) in [#N](https://github.com/2h2d-co/pi-openai-codex-fast/pull/N).`
 - Release commits should do the following:
   - update the package version;
   - keep changelog entries under `Unreleased` for prereleases and move them into a release section only for stable releases;
