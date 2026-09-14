@@ -82,7 +82,7 @@ async function getOpenAICodexAuth(
   }
 }
 
-export function getOpenAICodexFastModels(
+function getOpenAICodexFastModels(
   openAICodexModels: readonly Model<OpenAICodexApi>[],
 ): ProviderModelConfig[] {
   return openAICodexModels

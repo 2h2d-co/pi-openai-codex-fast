@@ -22,7 +22,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { getOpenAICodexFastModels } from "../index.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, process.env["TEST_EXTENSION_PATH"] ?? "index.ts");
@@ -32,9 +31,8 @@ const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
-const ASTRA_MODEL_ID = "gpt-6-astra";
 const FAST_MODEL_IDS = [
-  ASTRA_MODEL_ID,
+  "gpt-6-astra",
   "gpt-5.4",
   "gpt-5.4-mini",
   "gpt-5.5",
@@ -524,16 +522,6 @@ test("package manifest keeps npm package name while loading the top-level extens
 
   assert.equal(packageJson.name, "pi-openai-codex-fast");
   assert.deepEqual(packageJson.pi.extensions, ["./index.ts"]);
-});
-
-test("includes Astra when the built-in Codex catalog exposes it", () => {
-  const codexModel = getBuiltinModels(CODEX_PROVIDER).find((model) => model.id === MODEL_ID);
-  assert.ok(codexModel);
-
-  const astraModel = { ...codexModel, id: ASTRA_MODEL_ID, name: "GPT-6 Astra" };
-  const fastModels = getOpenAICodexFastModels([codexModel, astraModel]);
-
-  assert.deepEqual(fastModels.map((model) => model.id).sort(), [ASTRA_MODEL_ID, MODEL_ID].sort());
 });
 
 test("registers fast models before session_start without requiring Codex auth", async (t) => {
