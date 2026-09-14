@@ -6,7 +6,7 @@
 
 ### Added
 
-- Add priority-tier Codex requests for `gpt-6-astra`.
+- Add priority-tier Codex requests for `gpt-6-astra`. Contributed by [@clioo](https://github.com/clioo) in [#20](https://github.com/2h2d-co/pi-openai-codex-fast/pull/20).
 
 ### Changed
 
