@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.13 - 2026-09-20
+
 ### Changed
 
 - Require Pi 0.86.x and update the development dependencies and lockfile to Pi 0.86.0.
