@@ -75,6 +75,12 @@ hk check --all --check
 npm run benchmark
 ```
 
+`npm run test:js` compiles into a temporary directory and preserves existing
+`dist/` output. Run `mise run test:live` to test the packed extension through
+the shipped Pi 0.86.0 CLI with the existing Codex login. It verifies priority
+requests, canonical tool history, prompt reload, session resume, and the
+normal-tier control. Tests use isolated configuration and synthetic prompts.
+
 ## Packaging
 
 This package publishes the TypeScript extension entrypoint and these project files explicitly:
@@ -89,7 +95,7 @@ The build output is a local test artifact for verifying the extension also works
 Release flow:
 
 1. Run `npm run release -- X.Y.Z` from a clean, synchronized `main`.
-2. The command builds the exact package locally, records its SHA-256 in an SSH-signed release commit, proves a clean rebuild is reproducible, and creates a lightweight tag.
+2. The command builds the exact package locally and requires its live CLI test to pass before creating a release commit. It then records its SHA-256 in an SSH-signed release commit, proves a clean rebuild is reproducible, and creates a lightweight tag. Missing credentials or failing live tests stop the release.
 3. Inspect the result, then push atomically with `git push --atomic origin main vX.Y.Z`.
 4. A read-only GitHub Actions job validates and packs the package. After approval in the tag-restricted `npm-publish` environment, a separate GitHub-owned job verifies the signature and signed digest before attesting and staging that exact archive through npm trusted publishing.
 5. Approve the staged package on npmjs.com, or with `npm stage approve <stage-id>`.
