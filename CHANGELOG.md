@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- Require Pi 0.86.x and update the development dependencies and lockfile to Pi 0.86.0.
+- Remove the retired `gpt-5.4` and `gpt-5.4-mini` models from the fast-provider allowlist.
+
+### Fixed
+
+- Accept Pi's normalized transcript input while preserving system instructions, tool changes, priority requests, and canonical Codex history.
+
 ## 0.0.12 - 2026-09-14
 
 ### Added

@@ -2,6 +2,8 @@
 
 Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
 
+Requires Pi `>=0.86.0 <0.87.0`.
+
 ## Behavior
 
 `openai-codex-fast` is a separate selectable provider that delegates to Pi's built-in `openai-codex` implementation with the same model id and `serviceTier: "priority"`. Normal `openai-codex/<modelId>` selections are left on the normal/default-tier path.
@@ -13,8 +15,6 @@ Currently exposed fast models:
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
 - `gpt-5.5`
-- `gpt-5.4`
-- `gpt-5.4-mini`
 
 Runtime behavior when `openai-codex-fast/<modelId>` is selected:
 
@@ -24,6 +24,7 @@ Runtime behavior when `openai-codex-fast/<modelId>` is selected:
   - `provider: "openai-codex"`
   - `api: "openai-codex-responses"`
 - Does not rewrite stored assistant history back to `openai-codex-fast` or `openai-codex-fast-responses`.
+- Preserves Pi's transcript-backed system instructions and tool changes by passing the normalized conversation to the built-in Codex adapter.
 
 Fast-mode recovery:
 

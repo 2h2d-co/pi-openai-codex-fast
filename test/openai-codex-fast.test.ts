@@ -18,6 +18,7 @@ import {
   type CompactionSettings,
   type CreateAgentSessionOptions,
   type CreateAgentSessionResult,
+  type ExtensionFactory,
   type SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
@@ -31,15 +32,7 @@ const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
-const FAST_MODEL_IDS = [
-  "gpt-6-astra",
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.5",
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-];
+const FAST_MODEL_IDS = ["gpt-6-astra", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"];
 const SESSION_START_REASONS: SessionStartEvent["reason"][] = [
   "startup",
   "reload",
@@ -116,6 +109,8 @@ interface IntegrationSessionOptions {
   compaction?: CompactionSettings;
   sessionManager?: SessionManager;
   sessionStartReason?: SessionStartEvent["reason"];
+  extensionFactories?: ExtensionFactory[];
+  noTools?: "all" | "builtin";
 }
 
 function isString(value: unknown): value is string {
@@ -451,6 +446,7 @@ async function createIntegrationSession(
     agentDir,
     settingsManager,
     additionalExtensionPaths: [extensionPath],
+    extensionFactories: options.extensionFactories ?? [],
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,
@@ -471,7 +467,7 @@ async function createIntegrationSession(
     resourceLoader,
     model: initialModel,
     thinkingLevel: "off",
-    noTools: "all",
+    noTools: options.noTools ?? "all",
   };
   if (options.sessionStartReason) {
     sessionOptions.sessionStartEvent = {
@@ -586,6 +582,7 @@ test("loads through Pi's resource loader and registers a real fast provider", as
   assert.deepEqual(fastModels.map((model) => model.id).sort(), [...FAST_MODEL_IDS].sort());
   assert.ok(fastModels.every((model) => model.api === FAST_API));
   assert.ok(!fastModels.some((model) => model.id === "gpt-5.2"));
+  assert.ok(!fastModels.some((model) => model.id === "gpt-5.4" || model.id === "gpt-5.4-mini"));
   assert.equal(session.extensionRunner.hasHandlers("session_start"), true);
   assert.equal(session.extensionRunner.hasHandlers("session_tree"), false);
 });
@@ -605,6 +602,9 @@ test("runs a real Pi prompt through fast Codex as priority while storing canonic
   assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
   assert.equal(request.body["model"], MODEL_ID);
   assert.equal(request.body["service_tier"], "priority");
+  assert.ok(isString(request.body["instructions"]));
+  assert.notEqual(request.body["instructions"], "You are a helpful assistant.");
+  assert.deepEqual(request.body["reasoning"], { effort: "none" });
 
   const messages = assistantMessages(session);
   assert.equal(messages.length, 1);
@@ -619,6 +619,68 @@ test("runs a real Pi prompt through fast Codex as priority while storing canonic
   assert.equal(content.text, "fast ok");
   assertCanonicalAssistantMessages(session);
   assert.ok(!session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
+});
+
+test("preserves transcript prompts and tool changes through the built-in Codex adapter", async (t) => {
+  const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }]);
+  let guidance = "Initial synthetic guidance";
+  const { session } = await createIntegrationSession(t, {
+    codexBaseUrl: server.baseUrl,
+    noTools: "builtin",
+    extensionFactories: [
+      (pi) => {
+        pi.registerTool({
+          name: "audit_tool",
+          label: "Audit",
+          description: "Synthetic integration tool",
+          parameters: { type: "object", properties: {} },
+          async execute() {
+            return { content: [{ type: "text", text: "ok" }], details: {} };
+          },
+        });
+        pi.on("before_agent_start", (event) => {
+          event.systemPromptOptions.sections["audit_guidance"] = guidance;
+        });
+      },
+    ],
+  });
+
+  await selectFastModel(session, "gpt-5.6-sol");
+  session.setActiveToolsByName(["read"]);
+  await session.prompt("first", { expandPromptTemplates: false });
+  guidance = "Updated synthetic guidance";
+  session.setActiveToolsByName(["read", "audit_tool"]);
+  await session.prompt("second", { expandPromptTemplates: false });
+  session.setActiveToolsByName(["audit_tool"]);
+  await session.prompt("third", { expandPromptTemplates: false });
+
+  assert.equal(server.requests.length, 3);
+  const [first, second, third] = server.requests;
+  assert.ok(first);
+  assert.ok(second);
+  assert.ok(third);
+  assert.match(JSON.stringify(first.body), /Initial synthetic guidance/);
+  assert.doesNotMatch(JSON.stringify(first.body), /audit_tool/);
+  assert.match(JSON.stringify(second.body), /Updated synthetic guidance/);
+  assert.match(JSON.stringify(second.body), /audit_tool/);
+  assert.equal(second.body["instructions"], first.body["instructions"]);
+  const updatedInput = second.body["input"];
+  assert.ok(Array.isArray(updatedInput));
+  assert.ok(updatedInput.some((item) => isJsonObject(item) && item["type"] === "additional_tools"));
+  assert.match(JSON.stringify(third.body), /Updated synthetic guidance/);
+  const remainingTools = third.body["tools"];
+  assert.ok(Array.isArray(remainingTools));
+  assert.deepEqual(
+    remainingTools.filter(isJsonObject).map((tool) => tool["name"]),
+    ["audit_tool"],
+  );
+  assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
+  assertCanonicalAssistantMessages(session);
+  assert.ok(
+    session.sessionManager
+      .getBranch()
+      .filter((entry) => entry.type === "message" && entry.message.role === "system").length >= 2,
+  );
 });
 
 test("remaps fast context overflow errors and lets Pi compact and retry", async (t) => {

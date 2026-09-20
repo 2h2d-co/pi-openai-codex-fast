@@ -12,10 +12,10 @@ import {
   streamOpenAICodexResponses,
   type Api,
   type AssistantMessage,
-  type Context,
   type Model,
   type OpenAICodexResponsesOptions,
   type SimpleStreamOptions,
+  type TranscriptContext,
 } from "@earendil-works/pi-ai/compat";
 
 const OPENAI_CODEX_FAST_API = "openai-codex-fast-responses";
@@ -29,8 +29,6 @@ const OPENAI_CODEX_FAST_MODEL_IDS = new Set([
   "gpt-5.6-terra",
   "gpt-5.6-sol",
   "gpt-5.5",
-  "gpt-5.4",
-  "gpt-5.4-mini",
 ]);
 
 type ExtensionDiagnostic = {
@@ -176,7 +174,7 @@ function streamSimpleOpenAICodexFast(
   modelRegistry: ModelRegistry | undefined,
   openAICodexModels: readonly Model<OpenAICodexApi>[],
   model: Model<Api>,
-  context: Context,
+  context: TranscriptContext,
   options?: SimpleStreamOptions,
 ) {
   const outer = createAssistantMessageEventStream();
