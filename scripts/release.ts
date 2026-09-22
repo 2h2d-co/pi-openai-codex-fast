@@ -86,6 +86,8 @@ async function createRelease(releaseVersion: string, releaseTag: string): Promis
   }
   git(["add", ...releaseMetadataFiles]);
   assertStagedReleaseFiles();
+  git(["status", "--short"]);
+  git(["diff", "--cached"]);
 
   const localDigest = await buildPackageFromIndex(releaseVersion, true);
   git([
