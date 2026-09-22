@@ -13,7 +13,7 @@ const instructions = (marker: string) =>
   "the value from the latest user message. Do not respond with text.";
 
 test(
-  "packaged Fast preserves priority, canonical history, and reload through live Pi 0.86",
+  "packaged Fast preserves priority, canonical history, and reload through live Pi 0.87",
   {
     skip: process.env["PI_FAST_LIVE_TEST"] !== "1",
     timeout: 240_000,
@@ -64,7 +64,7 @@ test(
         env: { ...process.env, ...env },
         encoding: "utf8",
       }).trim(),
-      "0.86.0",
+      "0.87.0",
     );
     await mkdir(env.PI_CODING_AGENT_DIR);
     await writeFile(
@@ -161,7 +161,7 @@ test(
     await turn("SECOND", "delta", false);
     await client.stop();
     t.diagnostic(
-      "Pi 0.86.0: packed extension, live priority requests, canonical tool history, prompt reload, resume, and normal-tier control passed",
+      "Pi 0.87.0: packed extension, live priority requests, canonical tool history, prompt reload, resume, and normal-tier control passed",
     );
   },
 );

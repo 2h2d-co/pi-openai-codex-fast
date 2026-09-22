@@ -688,6 +688,8 @@ test("remaps fast context overflow errors and lets Pi compact and retry", async 
     { events: textResponseEvents("seed ok", "resp_seed") },
     { events: contextOverflowResponseEvents() },
     { events: textResponseEvents("overflow summary", "resp_summary") },
+    // Pi 0.87 omits the failed attempt and summarizes the split user turn separately.
+    { events: textResponseEvents("turn prefix summary", "resp_prefix_summary") },
     { events: textResponseEvents("recovered after compaction", "resp_retry") },
   ]);
   const { session } = await createIntegrationSession(t, {
@@ -718,7 +720,7 @@ test("remaps fast context overflow errors and lets Pi compact and retry", async 
   await session.prompt("overflow then recover", { expandPromptTemplates: false });
 
   const modelRequests = server.requests.filter((request) => request.body["model"] === MODEL_ID);
-  assert.equal(modelRequests.length, 4);
+  assert.equal(modelRequests.length, 5);
   assert.ok(modelRequests.every((request) => request.body["service_tier"] === "priority"));
   assert.deepEqual(compactionEvents, [
     { reason: "overflow" },
