@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.0.15 - 2026-09-23
+
+### Changed
+
+- Clarify that context-overflow errors retain the `openai-codex-fast` provider identity.
+  Priority requests and conversation history behavior are unchanged.
+
 ## 0.0.14 - 2026-09-22
 
 ### Changed
