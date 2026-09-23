@@ -33,7 +33,16 @@ const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
-const FAST_MODEL_IDS = ["gpt-6-astra", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"];
+const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna"];
+const FAST_MODEL_IDS = [
+  "gpt-6-astra",
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-5.5",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
+];
 const SESSION_START_REASONS: SessionStartEvent["reason"][] = [
   "startup",
   "reload",
@@ -105,6 +114,7 @@ interface CodexTestServer {
 }
 
 interface IntegrationSessionOptions {
+  modelId?: string;
   bindExtensions?: boolean;
   codexBaseUrl?: string;
   compaction?: CompactionSettings;
@@ -456,8 +466,9 @@ async function createIntegrationSession(
 
   await reloadResourceLoaderWithAgentDir(resourceLoader, agentDir);
 
-  const initialModel = modelRuntime.getModel(CODEX_PROVIDER, MODEL_ID);
-  assert.ok(initialModel, `Expected built-in ${CODEX_PROVIDER}/${MODEL_ID} to exist`);
+  const modelId = options.modelId ?? MODEL_ID;
+  const initialModel = modelRuntime.getModel(CODEX_PROVIDER, modelId);
+  assert.ok(initialModel, `Expected built-in ${CODEX_PROVIDER}/${modelId} to exist`);
 
   const sessionOptions: CreateAgentSessionOptions = {
     cwd,
@@ -480,7 +491,7 @@ async function createIntegrationSession(
   t.after(() => result.session.dispose());
 
   assert.deepEqual(result.extensionsResult.errors, []);
-  assert.ok(modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
+  assert.ok(modelRuntime.getModel(FAST_PROVIDER, modelId));
   if (options.bindExtensions !== false) {
     await result.session.bindExtensions({});
   }
@@ -597,282 +608,331 @@ test("loads through Pi's resource loader and registers a real fast provider", as
   assert.equal(session.extensionRunner.hasHandlers("session_tree"), false);
 });
 
-test("runs a real Pi prompt through fast Codex as priority while storing canonical assistant history", async (t) => {
-  const server = await startCodexServer(t, [{ events: textResponseEvents("fast ok") }]);
-  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
-
-  await selectFastModel(session);
-  await session.prompt("hello from integration", { expandPromptTemplates: false });
-
-  assert.equal(server.requests.length, 1);
-  const request = server.requests[0];
-  assert.ok(request);
-  assert.equal(request.method, "POST");
-  assert.equal(request.url, "/codex/responses");
-  assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
-  assert.equal(request.body["model"], MODEL_ID);
-  assert.equal(request.body["service_tier"], "priority");
-  assert.ok(isString(request.body["instructions"]));
-  assert.notEqual(request.body["instructions"], "You are a helpful assistant.");
-  assert.deepEqual(request.body["reasoning"], { effort: "none" });
-
-  const messages = assistantMessages(session);
-  assert.equal(messages.length, 1);
-  const message = messages[0];
-  assert.ok(message);
-  assert.equal(message.provider, CODEX_PROVIDER);
-  assert.equal(message.api, CODEX_API);
-  const content = message.content[0];
-  if (!content || content.type !== "text") {
-    assert.fail("Expected a text assistant message");
-  }
-  assert.equal(content.text, "fast ok");
-  assertCanonicalAssistantMessages(session);
-  assert.ok(!session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
-});
-
-test("preserves transcript prompts and tool changes through the built-in Codex adapter", async (t) => {
-  const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }]);
-  let guidance = "Initial synthetic guidance";
-  const { session } = await createIntegrationSession(t, {
-    codexBaseUrl: server.baseUrl,
-    noTools: "builtin",
-    extensionFactories: [
-      (pi) => {
-        pi.registerTool({
-          name: "audit_tool",
-          label: "Audit",
-          description: "Synthetic integration tool",
-          parameters: { type: "object", properties: {} },
-          async execute() {
-            return { content: [{ type: "text", text: "ok" }], details: {} };
-          },
-        });
-        pi.on("before_agent_start", (event) => {
-          event.systemPromptOptions.sections["audit_guidance"] = guidance;
-        });
-      },
-    ],
-  });
-
-  await selectFastModel(session, "gpt-5.6-sol");
-  session.setActiveToolsByName(["read"]);
-  await session.prompt("first", { expandPromptTemplates: false });
-  guidance = "Updated synthetic guidance";
-  session.setActiveToolsByName(["read", "audit_tool"]);
-  await session.prompt("second", { expandPromptTemplates: false });
-  session.setActiveToolsByName(["audit_tool"]);
-  await session.prompt("third", { expandPromptTemplates: false });
-
-  assert.equal(server.requests.length, 3);
-  const [first, second, third] = server.requests;
-  assert.ok(first);
-  assert.ok(second);
-  assert.ok(third);
-  assert.match(JSON.stringify(first.body), /Initial synthetic guidance/);
-  assert.doesNotMatch(JSON.stringify(first.body), /audit_tool/);
-  assert.match(JSON.stringify(second.body), /Updated synthetic guidance/);
-  assert.match(JSON.stringify(second.body), /audit_tool/);
-  assert.equal(second.body["instructions"], first.body["instructions"]);
-  const updatedInput = second.body["input"];
-  assert.ok(Array.isArray(updatedInput));
-  assert.ok(updatedInput.some((item) => isJsonObject(item) && item["type"] === "additional_tools"));
-  assert.match(JSON.stringify(third.body), /Updated synthetic guidance/);
-  const remainingTools = third.body["tools"];
-  assert.ok(Array.isArray(remainingTools));
-  assert.deepEqual(
-    remainingTools.filter(isJsonObject).map((tool) => tool["name"]),
-    ["audit_tool"],
-  );
-  assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
-  assertCanonicalAssistantMessages(session);
-  assert.ok(
-    session.sessionManager
-      .getBranch()
-      .filter((entry) => entry.type === "message" && entry.message.role === "system").length >= 2,
-  );
-});
-
-test("remaps fast context overflow errors and lets Pi compact and retry", async (t) => {
-  const server = await startCodexServer(t, [
-    { events: textResponseEvents("seed ok", "resp_seed") },
-    { events: contextOverflowResponseEvents() },
-    { events: textResponseEvents("overflow summary", "resp_summary") },
-    // Pi 0.87 omits the failed attempt and summarizes the split user turn separately.
-    { events: textResponseEvents("turn prefix summary", "resp_prefix_summary") },
-    { events: textResponseEvents("recovered after compaction", "resp_retry") },
-  ]);
-  const { session } = await createIntegrationSession(t, {
-    codexBaseUrl: server.baseUrl,
-    // Keep no recent history so the seed exchange is summarized before retrying.
-    compaction: { enabled: true, keepRecentTokens: 0, reserveTokens: 16_384 },
-  });
-  const compactionEvents: Array<{
-    reason: string;
-    willRetry?: boolean;
-    errorMessage?: string | undefined;
-  }> = [];
-  session.subscribe((event) => {
-    if (event.type === "compaction_start") {
-      compactionEvents.push({ reason: event.reason });
-    }
-    if (event.type === "compaction_end") {
-      compactionEvents.push({
-        reason: event.reason,
-        willRetry: event.willRetry,
-        errorMessage: event.errorMessage,
-      });
-    }
-  });
-
-  await selectFastModel(session);
-  await session.prompt("seed history", { expandPromptTemplates: false });
-  await session.prompt("overflow then recover", { expandPromptTemplates: false });
-
-  const modelRequests = server.requests.filter((request) => request.body["model"] === MODEL_ID);
-  assert.equal(modelRequests.length, 5);
-  assert.ok(modelRequests.every((request) => request.body["service_tier"] === "priority"));
-  assert.deepEqual(compactionEvents, [
-    { reason: "overflow" },
-    { reason: "overflow", willRetry: true, errorMessage: undefined },
-  ]);
-
-  const compactionEntries = session.sessionManager
-    .getBranch()
-    .filter((entry) => entry.type === "compaction");
-  assert.equal(compactionEntries.length, 1);
-
-  const messages = assistantMessages(session);
-  assert.equal(messages.length, 3);
-  const seedSuccess = messages[0];
-  const overflowError = messages[1];
-  const retrySuccess = messages[2];
-  assert.ok(seedSuccess);
-  assert.ok(overflowError);
-  assert.ok(retrySuccess);
-  assert.equal(seedSuccess.stopReason, "stop");
-  assert.equal(seedSuccess.provider, CODEX_PROVIDER);
-  assert.equal(seedSuccess.api, CODEX_API);
-  assert.equal(overflowError.stopReason, "error");
-  assert.equal(overflowError.provider, FAST_PROVIDER);
-  assert.equal(overflowError.api, CODEX_API);
-  assert.match(overflowError.errorMessage ?? "", /exceeds the context window/i);
-  assert.equal(retrySuccess.stopReason, "stop");
-  assert.equal(retrySuccess.provider, CODEX_PROVIDER);
-  assert.equal(retrySuccess.api, CODEX_API);
-  const content = retrySuccess.content[0];
-  if (!content || content.type !== "text") {
-    assert.fail("Expected retry success to contain text");
-  }
-  assert.equal(content.text, "recovered after compaction");
-});
-
-test("stores tool-calling fast replies canonically through the real Pi agent loop", async (t) => {
-  const server = await startCodexServer(t, [
-    { events: toolCallResponseEvents() },
-    { events: textResponseEvents("tool follow-up complete", "resp_after_tool") },
-  ]);
-  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
-
-  await selectFastModel(session);
-  await session.prompt("please call a tool", { expandPromptTemplates: false });
-
-  assert.equal(server.requests.length, 2);
-  assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
-
-  const messages = assistantMessages(session);
-  assert.equal(messages.length, 2);
-  const firstMessage = messages[0];
-  const secondMessage = messages[1];
-  assert.ok(firstMessage);
-  assert.ok(secondMessage);
-  assert.equal(firstMessage.provider, CODEX_PROVIDER);
-  assert.equal(firstMessage.api, CODEX_API);
-  const firstContent = firstMessage.content[0];
-  if (!firstContent || firstContent.type !== "toolCall") {
-    assert.fail("Expected first assistant message to contain a tool call");
-  }
-  const secondContent = secondMessage.content[0];
-  if (!secondContent || secondContent.type !== "text") {
-    assert.fail("Expected second assistant message to contain text");
-  }
-  assert.equal(secondContent.text, "tool follow-up complete");
-  assertCanonicalAssistantMessages(session);
-});
-
-test("stores fast setup errors canonically without sending a provider request", async (t) => {
-  const server = await startCodexServer(t, [
-    { events: textResponseEvents("should not be requested") },
-  ]);
-  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
-
-  await selectFastModel(session);
-  await session.modelRuntime.logout(CODEX_PROVIDER);
-  await session.prompt("this should fail before fetch", { expandPromptTemplates: false });
-
-  assert.equal(server.requests.length, 0);
-  const messages = assistantMessages(session);
-  assert.equal(messages.length, 1);
-  const message = messages[0];
-  assert.ok(message);
-  assert.equal(message.provider, CODEX_PROVIDER);
-  assert.equal(message.api, CODEX_API);
-  assert.equal(message.stopReason, "error");
-  assert.ok(message.errorMessage);
-  assert.match(message.errorMessage, /No openai-codex auth found/);
-});
-
-test("recovers fast mode through Pi session_start for every supported reason", async (t) => {
-  for (const reason of SESSION_START_REASONS) {
-    const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-recovery-"));
-    const cwd = join(tempRoot, "cwd");
-    await mkdir(cwd, { recursive: true });
-    t.after(async () => rm(tempRoot, { recursive: true, force: true }));
-
-    const sessionManager = SessionManager.inMemory(cwd);
-    sessionManager.appendModelChange(FAST_PROVIDER, MODEL_ID);
-    sessionManager.appendMessage({ role: "user", content: "prior message", timestamp: Date.now() });
-
+for (const modelId of BEHAVIOR_MODEL_IDS) {
+  test(`${modelId} uses priority with canonical history and preserves the normal-tier control`, async (t) => {
+    const server = await startCodexServer(t, [
+      { events: textResponseEvents("fast ok") },
+      { events: textResponseEvents("normal ok", "resp_normal") },
+    ]);
     const { session } = await createIntegrationSession(t, {
-      bindExtensions: false,
-      sessionManager,
-      sessionStartReason: reason,
+      codexBaseUrl: server.baseUrl,
+      modelId,
     });
-    assert.notEqual(session.model?.provider, FAST_PROVIDER);
 
-    await session.bindExtensions({});
-    assert.equal(session.model?.provider, FAST_PROVIDER, reason);
-    assert.equal(session.model?.id, MODEL_ID, reason);
-  }
-});
+    await selectFastModel(session, modelId);
+    await session.prompt("hello from integration", { expandPromptTemplates: false });
 
-test("does not recover fast mode when the latest overall model_change is not fast", async (t) => {
-  for (const provider of [CODEX_PROVIDER, "anthropic"]) {
-    const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-recovery-"));
-    const cwd = join(tempRoot, "cwd");
-    await mkdir(cwd, { recursive: true });
-    t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+    assert.equal(server.requests.length, 1);
+    const request = server.requests[0];
+    assert.ok(request);
+    assert.equal(request.method, "POST");
+    assert.equal(request.url, "/codex/responses");
+    assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
+    assert.equal(request.body["model"], modelId);
+    assert.equal(request.body["service_tier"], "priority");
+    assert.ok(isString(request.body["instructions"]));
+    assert.notEqual(request.body["instructions"], "You are a helpful assistant.");
+    assert.deepEqual(request.body["reasoning"], { effort: "none" });
 
-    const sessionManager = SessionManager.inMemory(cwd);
-    sessionManager.appendModelChange(FAST_PROVIDER, MODEL_ID);
-    sessionManager.appendMessage({
-      role: "user",
-      content: "prior fast branch",
-      timestamp: Date.now(),
+    const messages = assistantMessages(session);
+    assert.equal(messages.length, 1);
+    const message = messages[0];
+    assert.ok(message);
+    assert.equal(message.provider, CODEX_PROVIDER);
+    assert.equal(message.api, CODEX_API);
+    assert.equal(message.model, modelId);
+    const content = message.content[0];
+    if (!content || content.type !== "text") {
+      assert.fail("Expected a text assistant message");
+    }
+    assert.equal(content.text, "fast ok");
+    assertCanonicalAssistantMessages(session);
+    assert.ok(!session.sessionManager.getBranch().some((entry) => entry.type === "custom"));
+
+    const normalModel = session.modelRuntime.getModel(CODEX_PROVIDER, modelId);
+    assert.ok(normalModel);
+    const normalCost = (10 * normalModel.cost.input + 5 * normalModel.cost.output) / 1_000_000;
+    // Pi prices a requested priority tier even when Codex echoes "default".
+    const priorityMultiplier = modelId === "gpt-5.5" ? 2.5 : 2;
+    assert.ok(Math.abs(message.usage.cost.total - normalCost * priorityMultiplier) < 1e-12);
+    await session.setModel(normalModel);
+    await session.prompt("normal control", { expandPromptTemplates: false });
+    assert.equal(server.requests.length, 2);
+    assert.equal(server.requests[1]?.body["model"], modelId);
+    assert.equal(server.requests[1]?.body["service_tier"], undefined);
+    const normalMessage = assistantMessages(session).at(-1);
+    assert.ok(normalMessage);
+    assert.ok(Math.abs(normalMessage.usage.cost.total - normalCost) < 1e-12);
+    assertCanonicalAssistantMessages(session);
+  });
+}
+
+for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna"]) {
+  test(`${modelId} preserves transcript prompts and tool changes through the built-in Codex adapter`, async (t) => {
+    const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }]);
+    let guidance = "Initial synthetic guidance";
+    const { session } = await createIntegrationSession(t, {
+      codexBaseUrl: server.baseUrl,
+      modelId,
+      noTools: "builtin",
+      extensionFactories: [
+        (pi) => {
+          pi.registerTool({
+            name: "audit_tool",
+            label: "Audit",
+            description: "Synthetic integration tool",
+            parameters: { type: "object", properties: {} },
+            async execute() {
+              return { content: [{ type: "text", text: "ok" }], details: {} };
+            },
+          });
+          pi.on("before_agent_start", (event) => {
+            event.systemPromptOptions.sections["audit_guidance"] = guidance;
+          });
+        },
+      ],
     });
-    sessionManager.appendModelChange(
-      provider,
-      provider === CODEX_PROVIDER ? MODEL_ID : "claude-sonnet",
+
+    await selectFastModel(session, modelId);
+    session.setActiveToolsByName(["read"]);
+    await session.prompt("first", { expandPromptTemplates: false });
+    guidance = "Updated synthetic guidance";
+    session.setActiveToolsByName(["read", "audit_tool"]);
+    await session.prompt("second", { expandPromptTemplates: false });
+    session.setActiveToolsByName(["audit_tool"]);
+    await session.prompt("third", { expandPromptTemplates: false });
+
+    assert.equal(server.requests.length, 3);
+    const [first, second, third] = server.requests;
+    assert.ok(first);
+    assert.ok(second);
+    assert.ok(third);
+    assert.match(JSON.stringify(first.body), /Initial synthetic guidance/);
+    assert.doesNotMatch(JSON.stringify(first.body), /audit_tool/);
+    assert.match(JSON.stringify(second.body), /Updated synthetic guidance/);
+    assert.match(JSON.stringify(second.body), /audit_tool/);
+    assert.equal(second.body["instructions"], first.body["instructions"]);
+    const updatedInput = second.body["input"];
+    assert.ok(Array.isArray(updatedInput));
+    assert.ok(
+      updatedInput.some((item) => isJsonObject(item) && item["type"] === "additional_tools"),
     );
-    sessionManager.appendMessage({ role: "user", content: "latest branch", timestamp: Date.now() });
+    assert.match(JSON.stringify(third.body), /Updated synthetic guidance/);
+    const remainingTools = third.body["tools"];
+    assert.ok(Array.isArray(remainingTools));
+    assert.deepEqual(
+      remainingTools.filter(isJsonObject).map((tool) => tool["name"]),
+      ["audit_tool"],
+    );
+    assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
+    assertCanonicalAssistantMessages(session);
+    assert.ok(
+      session.sessionManager
+        .getBranch()
+        .filter((entry) => entry.type === "message" && entry.message.role === "system").length >= 2,
+    );
+  });
+}
 
+for (const modelId of BEHAVIOR_MODEL_IDS) {
+  test(`${modelId} remaps fast context overflow errors and lets Pi compact and retry`, async (t) => {
+    const server = await startCodexServer(t, [
+      { events: textResponseEvents("seed ok", "resp_seed") },
+      { events: contextOverflowResponseEvents() },
+      { events: textResponseEvents("overflow summary", "resp_summary") },
+      // Pi 0.87 omits the failed attempt and summarizes the split user turn separately.
+      { events: textResponseEvents("turn prefix summary", "resp_prefix_summary") },
+      { events: textResponseEvents("recovered after compaction", "resp_retry") },
+    ]);
     const { session } = await createIntegrationSession(t, {
-      bindExtensions: false,
-      sessionManager,
-      sessionStartReason: "startup",
+      codexBaseUrl: server.baseUrl,
+      modelId,
+      // Keep no recent history so the seed exchange is summarized before retrying.
+      compaction: { enabled: true, keepRecentTokens: 0, reserveTokens: 16_384 },
     });
-    await session.bindExtensions({});
+    const compactionEvents: Array<{
+      reason: string;
+      willRetry?: boolean;
+      errorMessage?: string | undefined;
+    }> = [];
+    session.subscribe((event) => {
+      if (event.type === "compaction_start") {
+        compactionEvents.push({ reason: event.reason });
+      }
+      if (event.type === "compaction_end") {
+        compactionEvents.push({
+          reason: event.reason,
+          willRetry: event.willRetry,
+          errorMessage: event.errorMessage,
+        });
+      }
+    });
 
-    assert.notEqual(session.model?.provider, FAST_PROVIDER, provider);
-  }
-});
+    await selectFastModel(session, modelId);
+    await session.prompt("seed history", { expandPromptTemplates: false });
+    await session.prompt("overflow then recover", { expandPromptTemplates: false });
+
+    const modelRequests = server.requests.filter((request) => request.body["model"] === modelId);
+    assert.equal(modelRequests.length, 5);
+    assert.ok(modelRequests.every((request) => request.body["service_tier"] === "priority"));
+    assert.deepEqual(compactionEvents, [
+      { reason: "overflow" },
+      { reason: "overflow", willRetry: true, errorMessage: undefined },
+    ]);
+
+    const compactionEntries = session.sessionManager
+      .getBranch()
+      .filter((entry) => entry.type === "compaction");
+    assert.equal(compactionEntries.length, 1);
+
+    const messages = assistantMessages(session);
+    assert.equal(messages.length, 3);
+    const seedSuccess = messages[0];
+    const overflowError = messages[1];
+    const retrySuccess = messages[2];
+    assert.ok(seedSuccess);
+    assert.ok(overflowError);
+    assert.ok(retrySuccess);
+    assert.equal(seedSuccess.stopReason, "stop");
+    assert.equal(seedSuccess.provider, CODEX_PROVIDER);
+    assert.equal(seedSuccess.api, CODEX_API);
+    assert.equal(overflowError.stopReason, "error");
+    assert.equal(overflowError.provider, FAST_PROVIDER);
+    assert.equal(overflowError.api, CODEX_API);
+    assert.match(overflowError.errorMessage ?? "", /exceeds the context window/i);
+    assert.equal(retrySuccess.stopReason, "stop");
+    assert.equal(retrySuccess.provider, CODEX_PROVIDER);
+    assert.equal(retrySuccess.api, CODEX_API);
+    const content = retrySuccess.content[0];
+    if (!content || content.type !== "text") {
+      assert.fail("Expected retry success to contain text");
+    }
+    assert.equal(content.text, "recovered after compaction");
+  });
+
+  test(`${modelId} stores tool-calling fast replies canonically through the real Pi agent loop`, async (t) => {
+    const server = await startCodexServer(t, [
+      { events: toolCallResponseEvents() },
+      { events: textResponseEvents("tool follow-up complete", "resp_after_tool") },
+    ]);
+    const { session } = await createIntegrationSession(t, {
+      codexBaseUrl: server.baseUrl,
+      modelId,
+    });
+
+    await selectFastModel(session, modelId);
+    await session.prompt("please call a tool", { expandPromptTemplates: false });
+
+    assert.equal(server.requests.length, 2);
+    assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
+
+    const messages = assistantMessages(session);
+    assert.equal(messages.length, 2);
+    const firstMessage = messages[0];
+    const secondMessage = messages[1];
+    assert.ok(firstMessage);
+    assert.ok(secondMessage);
+    assert.equal(firstMessage.provider, CODEX_PROVIDER);
+    assert.equal(firstMessage.api, CODEX_API);
+    const firstContent = firstMessage.content[0];
+    if (!firstContent || firstContent.type !== "toolCall") {
+      assert.fail("Expected first assistant message to contain a tool call");
+    }
+    const secondContent = secondMessage.content[0];
+    if (!secondContent || secondContent.type !== "text") {
+      assert.fail("Expected second assistant message to contain text");
+    }
+    assert.equal(secondContent.text, "tool follow-up complete");
+    assertCanonicalAssistantMessages(session);
+  });
+
+  test(`${modelId} stores fast setup errors canonically without sending a provider request`, async (t) => {
+    const server = await startCodexServer(t, [
+      { events: textResponseEvents("should not be requested") },
+    ]);
+    const { session } = await createIntegrationSession(t, {
+      codexBaseUrl: server.baseUrl,
+      modelId,
+    });
+
+    await selectFastModel(session, modelId);
+    await session.modelRuntime.logout(CODEX_PROVIDER);
+    await session.prompt("this should fail before fetch", { expandPromptTemplates: false });
+
+    assert.equal(server.requests.length, 0);
+    const messages = assistantMessages(session);
+    assert.equal(messages.length, 1);
+    const message = messages[0];
+    assert.ok(message);
+    assert.equal(message.provider, CODEX_PROVIDER);
+    assert.equal(message.api, CODEX_API);
+    assert.equal(message.stopReason, "error");
+    assert.ok(message.errorMessage);
+    assert.match(message.errorMessage, /No openai-codex auth found/);
+  });
+
+  test(`${modelId} recovers fast mode through Pi session_start for every supported reason`, async (t) => {
+    for (const reason of SESSION_START_REASONS) {
+      const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-recovery-"));
+      const cwd = join(tempRoot, "cwd");
+      await mkdir(cwd, { recursive: true });
+      t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+      const sessionManager = SessionManager.inMemory(cwd);
+      sessionManager.appendModelChange(FAST_PROVIDER, modelId);
+      sessionManager.appendMessage({
+        role: "user",
+        content: "prior message",
+        timestamp: Date.now(),
+      });
+
+      const { session } = await createIntegrationSession(t, {
+        bindExtensions: false,
+        modelId,
+        sessionManager,
+        sessionStartReason: reason,
+      });
+      assert.notEqual(session.model?.provider, FAST_PROVIDER);
+
+      await session.bindExtensions({});
+      assert.equal(session.model?.provider, FAST_PROVIDER, reason);
+      assert.equal(session.model?.id, modelId, reason);
+    }
+  });
+
+  test(`${modelId} does not recover fast mode when the latest overall model_change is not fast`, async (t) => {
+    for (const provider of [CODEX_PROVIDER, "anthropic"]) {
+      const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-recovery-"));
+      const cwd = join(tempRoot, "cwd");
+      await mkdir(cwd, { recursive: true });
+      t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+      const sessionManager = SessionManager.inMemory(cwd);
+      sessionManager.appendModelChange(FAST_PROVIDER, modelId);
+      sessionManager.appendMessage({
+        role: "user",
+        content: "prior fast branch",
+        timestamp: Date.now(),
+      });
+      sessionManager.appendModelChange(
+        provider,
+        provider === CODEX_PROVIDER ? modelId : "claude-sonnet",
+      );
+      sessionManager.appendMessage({
+        role: "user",
+        content: "latest branch",
+        timestamp: Date.now(),
+      });
+
+      const { session } = await createIntegrationSession(t, {
+        bindExtensions: false,
+        modelId,
+        sessionManager,
+        sessionStartReason: "startup",
+      });
+      await session.bindExtensions({});
+
+      assert.notEqual(session.model?.provider, FAST_PROVIDER, provider);
+    }
+  });
+}

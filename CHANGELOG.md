@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Add priority-tier Codex requests for `gpt-6-luna` and `gpt-6-sol`. Contributed by [@clioo](https://github.com/clioo) in [#29](https://github.com/2h2d-co/pi-openai-codex-fast/pull/29).
+
+### Changed
+
+- Require Pi 0.87.1 or later within 0.87.x for the new GPT-6 model catalog.
+
 ## 0.0.15 - 2026-09-23
 
 ### Changed

@@ -19,6 +19,8 @@ export default function (pi: ExtensionAPI): void {
   });
   pi.on("before_provider_request", (event, ctx) => {
     assert.ok(event.payload && typeof event.payload === "object");
+    assert.ok("model" in event.payload);
+    assert.equal(event.payload.model, ctx.model?.id);
     const tier = "service_tier" in event.payload ? event.payload.service_tier : undefined;
     const priority = ctx.model?.provider === "openai-codex-fast";
     assert.equal(tier, priority ? "priority" : undefined);
