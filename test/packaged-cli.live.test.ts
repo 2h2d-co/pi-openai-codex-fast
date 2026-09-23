@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
+import { archiveEntries, packageArchive } from "./package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const instructions = (marker: string) =>
@@ -23,22 +24,9 @@ test(
     assert.ok(token, "PI_FAST_LIVE_API_KEY is required");
     const temporary = await mkdtemp(join(tmpdir(), "fast-cli-live-"));
     t.after(() => rm(temporary, { recursive: true, force: true }));
-    let archive = process.env["PI_PACKAGE_ARCHIVE"];
-    if (!archive) {
-      execFileSync(
-        "npm",
-        ["pack", "--ignore-scripts", "--allow-directory=all", "--pack-destination", temporary],
-        { cwd: root, stdio: "pipe" },
-      );
-      const manifest: unknown = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-      assert.ok(manifest && typeof manifest === "object" && "version" in manifest);
-      assert.ok(typeof manifest.version === "string");
-      archive = join(temporary, `pi-openai-codex-fast-${manifest.version}.tgz`);
-    }
-    const files = execFileSync("tar", ["-tzf", archive], { encoding: "utf8" })
-      .trim()
-      .split("\n")
-      .sort();
+    // A supplied candidate is the release gate's exact archive; it never falls back to packing.
+    const archive = await packageArchive(root, temporary, process.env["PI_PACKAGE_ARCHIVE"]);
+    const files = archiveEntries(archive);
     const expected = (await readFile(join(root, ".github/npm-package-files"), "utf8"))
       .trim()
       .split("\n")

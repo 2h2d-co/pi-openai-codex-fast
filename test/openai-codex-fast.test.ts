@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +10,7 @@ import { zstdDecompressSync } from "node:zlib";
 import {
   createAgentSession,
   DefaultResourceLoader,
+  getPackageDir,
   ModelRuntime,
   resolveModelScopeWithDiagnostics,
   SessionManager,
@@ -511,6 +512,15 @@ function assertCanonicalAssistantMessages(session: AgentSession): void {
     assert.equal(message.api, CODEX_API);
   }
 }
+
+test("in-process Pi resolves its package metadata from the repository dependency", async () => {
+  // An inherited PI_PACKAGE_DIR would silently select another runtime's package.json, which
+  // defines Pi's version, app name, and agent-directory variable for every in-process test.
+  assert.equal(
+    await realpath(getPackageDir()),
+    await realpath(join(rootDir, "node_modules/@earendil-works/pi-coding-agent")),
+  );
+});
 
 test("package manifest keeps npm package name while loading the top-level extension path", async () => {
   const packageJson: unknown = JSON.parse(await readFile(join(rootDir, "package.json"), "utf8"));
