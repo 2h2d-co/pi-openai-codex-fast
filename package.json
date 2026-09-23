@@ -1,6 +1,6 @@
 {
   "name": "pi-openai-codex-fast",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Pi package that adds an openai-codex-fast provider backed by openai-codex with priority service tier",
   "keywords": [
     "pi-package"
@@ -30,7 +30,7 @@
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "check": "hk check --all --check",
     "test": "npm run test:ts && npm run test:js",
-    "test:ts": "node --test --test-concurrency=1 test/*.test.ts",
+    "test:ts": "PI_PACKAGE_DIR=\"$PWD/node_modules/@earendil-works/pi-coding-agent\" node --test --test-concurrency=1 test/*.test.ts",
     "test:js": "node scripts/test-js.ts",
     "test:live": "PI_FAST_LIVE_TEST=1 node --test --test-concurrency=1 test/packaged-cli.live.test.ts",
     "release": "node scripts/release.ts",
