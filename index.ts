@@ -25,6 +25,8 @@ const OPENAI_CODEX_PROVIDER = "openai-codex";
 const PLACEHOLDER_API_KEY = "__openai_codex_fast_reuses_openai_codex_auth__";
 const OPENAI_CODEX_FAST_MODEL_IDS = new Set([
   "gpt-6-astra",
+  "gpt-6-luna",
+  "gpt-6-sol",
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",

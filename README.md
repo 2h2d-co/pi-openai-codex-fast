@@ -2,7 +2,7 @@
 
 Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
 
-Requires Pi `>=0.87.0 <0.88.0`.
+Requires Pi `>=0.87.1 <0.88.0`.
 
 ## Behavior
 
@@ -11,6 +11,8 @@ Requires Pi `>=0.87.0 <0.88.0`.
 Currently exposed fast models:
 
 - `gpt-6-astra`
+- `gpt-6-luna`
+- `gpt-6-sol`
 - `gpt-5.6-luna`
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
@@ -77,7 +79,7 @@ npm run benchmark
 
 `npm run test:js` compiles into a temporary directory and preserves existing
 `dist/` output. Run `mise run test:live` to test the packed extension through
-the shipped Pi 0.87.0 CLI with the existing Codex login. It verifies priority
+the shipped Pi 0.87.1 CLI with the existing Codex login. It verifies priority
 requests, canonical tool history, prompt reload, session resume, and the
 normal-tier control. Tests use isolated configuration and synthetic prompts.
 

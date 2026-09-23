@@ -64,7 +64,7 @@ test(
         env: { ...process.env, ...env },
         encoding: "utf8",
       }).trim(),
-      "0.87.0",
+      "0.87.1",
     );
     await mkdir(env.PI_CODING_AGENT_DIR);
     await writeFile(
@@ -161,7 +161,7 @@ test(
     await turn("SECOND", "delta", false);
     await client.stop();
     t.diagnostic(
-      "Pi 0.87.0: packed extension, live priority requests, canonical tool history, prompt reload, resume, and normal-tier control passed",
+      "Pi 0.87.1: packed extension, live priority requests, canonical tool history, prompt reload, resume, and normal-tier control passed",
     );
   },
 );

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Add priority-tier Codex requests for `gpt-6-luna` and `gpt-6-sol`.
+
+### Changed
+
+- Require Pi 0.87.1 or later within 0.87.x for the new GPT-6 model catalog.
+
 ## 0.0.14 - 2026-09-22
 
 ### Changed
