@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.16 - 2026-09-24
+
 ### Added
 
 - Add priority-tier Codex requests for `gpt-6-luna` and `gpt-6-sol`. Contributed by [@clioo](https://github.com/clioo) in [#29](https://github.com/2h2d-co/pi-openai-codex-fast/pull/29).
