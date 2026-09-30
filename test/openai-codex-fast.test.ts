@@ -634,7 +634,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.ok(isString(request.body["instructions"]));
     assert.notEqual(request.body["instructions"], "You are a helpful assistant.");
     // Thinking starts off. Models without an off level, such as GPT-6.1 Sol, clamp to
-    // Pi's lowest supported level, which requests low effort with reasoning summaries.
+    // `minimal`, which Pi's Codex adapter sends as low effort with reasoning summaries.
     const codexModel = session.modelRuntime.getModel(CODEX_PROVIDER, modelId);
     assert.ok(codexModel);
     assert.deepEqual(
@@ -670,6 +670,8 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.equal(server.requests.length, 2);
     assert.equal(server.requests[1]?.body["model"], modelId);
     assert.equal(server.requests[1]?.body["service_tier"], undefined);
+    // The fast provider clamps thinking exactly as the built-in provider does.
+    assert.deepEqual(server.requests[1]?.body["reasoning"], request.body["reasoning"]);
     const normalMessage = assistantMessages(session).at(-1);
     assert.ok(normalMessage);
     assert.ok(Math.abs(normalMessage.usage.cost.total - normalCost) < 1e-12);
