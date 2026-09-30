@@ -2,7 +2,7 @@
 
 Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
 
-Requires Pi `>=0.87.1 <0.88.0`.
+Requires Pi `>=0.99.1 <0.100.0`.
 
 ## Behavior
 
@@ -10,6 +10,7 @@ Requires Pi `>=0.87.1 <0.88.0`.
 
 Currently exposed fast models:
 
+- `gpt-6.1-sol`
 - `gpt-6-astra`
 - `gpt-6-luna`
 - `gpt-6-sol`
@@ -88,7 +89,7 @@ runtime's package metadata. Other Pi launches are not affected.
 
 Run `mise run test:live` to test the packed extension through the shipped Pi
 CLI with the existing Codex login. It exercises `gpt-5.6-luna`, `gpt-6-sol`,
-and `gpt-6-luna` at medium reasoning effort. Each model must pass priority
+`gpt-6-luna`, and `gpt-6.1-sol` at medium reasoning effort. Each model must pass priority
 requests and pricing, canonical tool history, prompt reload, session resume, a built-in
 file read, and the normal-tier control.
 Tests use isolated configuration and synthetic prompts. The default test suite
@@ -102,8 +103,8 @@ and CI skip it.
   the test; it never falls back to packing the worktree.
 - CLI: by default the test runs the repository's Pi development dependency.
   Set `PI_TEST_CLI_PATH` to another `cli.js` to test a different installation.
-  The peer range is `>=0.87.1 <0.88.0`, and the test asserts that the selected
-  CLI reports exactly `0.87.1`, the tested version.
+  The peer range is `>=0.99.1 <0.100.0`, and the test asserts that the selected
+  CLI reports exactly `0.99.1`, the tested version.
 - Runtime: each CLI child process receives `PI_PACKAGE_DIR` set to the selected
   executable's package directory. The Mise task also binds `PI_PACKAGE_DIR` to
   the repository dependency while it reads the Codex bearer token through

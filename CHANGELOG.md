@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Add priority-tier Codex requests for `gpt-6.1-sol`.
+
+### Changed
+
+- Require Pi `>=0.99.1 <0.100.0` for the GPT-6.1 Sol model catalog.
+
 ## 0.0.16 - 2026-09-24
 
 ### Added

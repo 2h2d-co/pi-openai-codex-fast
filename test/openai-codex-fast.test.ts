@@ -33,8 +33,9 @@ const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.5";
-const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna"];
+const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"];
 const FAST_MODEL_IDS = [
+  "gpt-6.1-sol",
   "gpt-6-astra",
   "gpt-6-luna",
   "gpt-6-sol",
@@ -632,7 +633,16 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.equal(request.body["service_tier"], "priority");
     assert.ok(isString(request.body["instructions"]));
     assert.notEqual(request.body["instructions"], "You are a helpful assistant.");
-    assert.deepEqual(request.body["reasoning"], { effort: "none" });
+    // Thinking starts off. Models without an off level, such as GPT-6.1 Sol, clamp to
+    // Pi's lowest supported level, which requests low effort with reasoning summaries.
+    const codexModel = session.modelRuntime.getModel(CODEX_PROVIDER, modelId);
+    assert.ok(codexModel);
+    assert.deepEqual(
+      request.body["reasoning"],
+      codexModel.thinkingLevelMap?.off === null
+        ? { effort: "low", summary: "auto" }
+        : { effort: "none" },
+    );
 
     const messages = assistantMessages(session);
     assert.equal(messages.length, 1);
@@ -667,7 +677,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
   });
 }
 
-for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna"]) {
+for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
   test(`${modelId} preserves transcript prompts and tool changes through the built-in Codex adapter`, async (t) => {
     const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }]);
     let guidance = "Initial synthetic guidance";
@@ -740,7 +750,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       { events: textResponseEvents("seed ok", "resp_seed") },
       { events: contextOverflowResponseEvents() },
       { events: textResponseEvents("overflow summary", "resp_summary") },
-      // Pi 0.87 omits the failed attempt and summarizes the split user turn separately.
+      // Pi omits the failed attempt and summarizes the split user turn separately.
       { events: textResponseEvents("turn prefix summary", "resp_prefix_summary") },
       { events: textResponseEvents("recovered after compaction", "resp_retry") },
     ]);
