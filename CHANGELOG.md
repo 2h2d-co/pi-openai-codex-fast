@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.17 - 2026-09-30
+
 ### Added
 
 - Add priority-tier Codex requests for `gpt-6.1-sol`.
