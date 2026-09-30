@@ -4,6 +4,10 @@ Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-
 
 Requires Pi `>=0.99.1 <0.100.0`.
 
+**Pi's virtual models are not supported.** Pi's experimental virtual models,
+registered with `pi.registerVirtualModel()`, are not tested with this package.
+Select an `openai-codex-fast` model directly.
+
 ## Behavior
 
 `openai-codex-fast` is a separate selectable provider that delegates to Pi's built-in `openai-codex` implementation with the same model id and `serviceTier: "priority"`. Normal `openai-codex/<modelId>` selections are left on the normal/default-tier path.
