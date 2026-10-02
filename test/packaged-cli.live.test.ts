@@ -152,7 +152,6 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         const call = assistant.content.find((block) => block.type === "toolCall");
         assert.ok(call);
         assert.equal(call.name, "verify_release");
-        assert.deepEqual(call.arguments, { marker, value });
         const entry = (await client.getEntries()).entries
           .filter(
             (candidate) =>
@@ -160,7 +159,9 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
           )
           .at(-1);
         assert.ok(entry?.type === "custom");
-        assert.deepEqual(entry.data, { priority });
+        // Verify the submitted prompt independently of the model's adherence.
+        assert.deepEqual(entry.data, { priority, marker });
+        assert.deepEqual(call.arguments, { marker, value });
         assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
       }
       await turn("FIRST", "alpha", true);
