@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.0.18 - 2026-10-02
+
+### Changed
+
+- Require Pi `>=1.0.0 <1.1.0`. Priority requests continue to use Pi's built-in
+  Codex adapter and inherit its fix for incompatible grammar-tool replay IDs.
+
 ## 0.0.17 - 2026-09-30
 
 ### Added
