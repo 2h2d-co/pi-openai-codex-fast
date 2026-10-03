@@ -2,7 +2,7 @@
 
 Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
 
-Requires Pi `>=1.0.0 <1.1.0`.
+Requires Pi `>=1.0.1 <1.1.0`.
 
 **Pi's virtual models are not supported.** Pi's experimental virtual models,
 registered with `pi.registerVirtualModel()`, are not tested with this package.
@@ -107,8 +107,8 @@ and CI skip it.
   the test; it never falls back to packing the worktree.
 - CLI: by default the test runs the repository's Pi development dependency.
   Set `PI_TEST_CLI_PATH` to another `cli.js` to test a different installation.
-  The peer range is `>=1.0.0 <1.1.0`, and the test asserts that the selected
-  CLI reports exactly `1.0.0`, the tested version.
+  The peer range is `>=1.0.1 <1.1.0`, and the test asserts that the selected
+  CLI reports exactly `1.0.1`, the tested version.
 - Runtime: each CLI child process receives `PI_PACKAGE_DIR` set to the selected
   executable's package directory. The Mise task also binds `PI_PACKAGE_DIR` to
   the repository dependency while it reads the Codex bearer token through

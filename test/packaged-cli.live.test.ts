@@ -19,7 +19,7 @@ const instructions = (marker: string) =>
 
 for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
   test(
-    `packaged Fast ${modelId} preserves priority, canonical history, and reload through live Pi 1.0.0`,
+    `packaged Fast ${modelId} preserves priority, canonical history, and reload through live Pi 1.0.1`,
     {
       skip: process.env["PI_FAST_LIVE_TEST"] !== "1",
       timeout: 240_000,
@@ -57,7 +57,7 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
           env: { ...process.env, ...env },
           encoding: "utf8",
         }).trim(),
-        "1.0.0",
+        "1.0.1",
       );
       await mkdir(env.PI_CODING_AGENT_DIR);
       await writeFile(
@@ -189,7 +189,7 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
       await turn("SECOND", "delta", false);
       await client.stop();
       t.diagnostic(
-        `Pi 1.0.0 ${modelId}: packed extension, live priority requests, canonical tool history, prompt reload, resume, built-in read, and normal-tier control passed`,
+        `Pi 1.0.1 ${modelId}: packed extension, live priority requests, canonical tool history, prompt reload, resume, built-in read, and normal-tier control passed`,
       );
     },
   );
