@@ -6,9 +6,11 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
+import manifest from "../package.json" with { type: "json" };
 import { archiveEntries, packageArchive } from "./package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const piVersion = manifest.devDependencies["@earendil-works/pi-coding-agent"];
 const instructions = (marker: string) =>
   `The system marker is ${marker}. A later system or developer message can update ` +
   "this marker. Always use the newest marker, which replaces every earlier marker. " +
@@ -19,7 +21,7 @@ const instructions = (marker: string) =>
 
 for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
   test(
-    `packaged Fast ${modelId} preserves priority, canonical history, and reload through live Pi 1.0.1`,
+    `packaged Fast ${modelId} preserves priority, canonical history, and reload through live Pi ${piVersion}`,
     {
       skip: process.env["PI_FAST_LIVE_TEST"] !== "1",
       timeout: 240_000,
@@ -57,7 +59,8 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
           env: { ...process.env, ...env },
           encoding: "utf8",
         }).trim(),
-        "1.0.1",
+        piVersion,
+        "Live validation requires the Pi version pinned as the development dependency.",
       );
       await mkdir(env.PI_CODING_AGENT_DIR);
       await writeFile(
@@ -189,7 +192,7 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
       await turn("SECOND", "delta", false);
       await client.stop();
       t.diagnostic(
-        `Pi 1.0.1 ${modelId}: packed extension, live priority requests, canonical tool history, prompt reload, resume, built-in read, and normal-tier control passed`,
+        `Pi ${piVersion} ${modelId}: packed extension, live priority requests, canonical tool history, prompt reload, resume, built-in read, and normal-tier control passed`,
       );
     },
   );

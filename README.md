@@ -108,7 +108,7 @@ and CI skip it.
 - CLI: by default the test runs the repository's Pi development dependency.
   Set `PI_TEST_CLI_PATH` to another `cli.js` to test a different installation.
   The peer range is `>=1.0.1 <1.1.0`, and the test asserts that the selected
-  CLI reports exactly `1.0.1`, the tested version.
+  CLI reports the version of the repository's Pi development dependency.
 - Runtime: each CLI child process receives `PI_PACKAGE_DIR` set to the selected
   executable's package directory. The Mise task also binds `PI_PACKAGE_DIR` to
   the repository dependency while it reads the Codex bearer token through
