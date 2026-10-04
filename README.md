@@ -71,7 +71,7 @@ openai-codex-fast/gpt-5.5
 ## Local development
 
 ```bash
-npm install
+mise run init
 npm run check # repository-wide hk quality gate
 npm test # integration tests for both direct TS loading and built JS
 npm run build
