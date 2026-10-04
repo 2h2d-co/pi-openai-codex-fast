@@ -8,6 +8,7 @@ import test, { type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const liveOperation = "npm synthetic-npm run test:live";
 const candidate = "synthetic release archive";
 const digest = createHash("sha256").update(candidate).digest("hex");
 const files = readFileSync(join(root, ".github/npm-package-files"), "utf8")
@@ -42,14 +43,14 @@ type Outcome = {
 let scenarioId = 0;
 
 /**
- * Runs the real release script with every child process intercepted. No Git, npm, Mise, or
+ * Runs the real release script with every child process intercepted. No Git, npm, or
  * provider command executes. The mocked npm pack writes a synthetic archive so the script hashes
  * and hands the exact candidate path to the live task.
  */
 async function runRelease(t: TestContext, scenario: Scenario): Promise<Outcome> {
   const version = scenario.version ?? "0.0.3";
   const tag = `v${version}`;
-  const spawnError = Object.assign(new Error("spawn mise ENOENT"), { code: "ENOENT" });
+  const spawnError = Object.assign(new Error("spawn node ENOENT"), { code: "ENOENT" });
   const previousArgv = process.argv;
   const previousNpm = process.env["npm_execpath"];
   const calls: Call[] = [];
@@ -111,19 +112,19 @@ async function runRelease(t: TestContext, scenario: Scenario): Promise<Outcome> 
           );
           archives.push(archive);
           stdout = JSON.stringify([{ name: "pi-openai-codex-fast", version, filename, files }]);
+        } else if (verb === "run") {
+          assert.deepEqual(args.slice(1), ["run", "test:live"]);
+          assert.equal(cwd, root, "The live test must run from the repository root.");
+          const supplied = options.env?.["PI_PACKAGE_ARCHIVE"];
+          assert.equal(supplied, archives[0], "The live test must receive the exact archive.");
+          assert.equal(readFileSync(String(supplied), "utf8"), candidate);
+          if (scenario.live === "spawn-error") {
+            error = spawnError;
+            status = null;
+          } else {
+            status = scenario.live ?? 0;
+          }
         } else throw new Error(`Unexpected npm command: ${operation}`);
-      } else if (command === "mise") {
-        assert.deepEqual(args, ["run", "test:live"]);
-        assert.equal(cwd, root, "The live task must run from the repository root.");
-        const supplied = options.env?.["PI_PACKAGE_ARCHIVE"];
-        assert.equal(supplied, archives[0], "The live task must receive the exact archive.");
-        assert.equal(readFileSync(String(supplied), "utf8"), candidate);
-        if (scenario.live === "spawn-error") {
-          error = spawnError;
-          status = null;
-        } else {
-          status = scenario.live ?? 0;
-        }
       } else throw new Error(`Unexpected child command: ${operation}`);
       return {
         pid: 0,
@@ -166,7 +167,7 @@ function operations(outcome: Outcome): string[] {
 }
 
 function liveRuns(outcome: Outcome): number {
-  return operations(outcome).filter((operation) => operation === "mise run test:live").length;
+  return operations(outcome).filter((operation) => operation === liveOperation).length;
 }
 
 test("release validates the exact archive once before signing and tagging", async (t) => {
@@ -177,7 +178,7 @@ test("release validates the exact archive once before signing and tagging", asyn
   assert.ok(outcome.tagged);
   assert.equal(outcome.archives.length, 2, "The staged and committed trees are packed once each.");
   const calls = operations(outcome);
-  const liveIndex = calls.indexOf("mise run test:live");
+  const liveIndex = calls.indexOf(liveOperation);
   const commitIndex = calls.findIndex((call) => call.startsWith("git commit "));
   const rebuildIndex = calls.findLastIndex((call) => call.startsWith("git checkout-index "));
   const tagIndex = calls.indexOf("git tag v0.0.3");
@@ -193,7 +194,7 @@ test("release validates the exact archive once before signing and tagging", asyn
 
 test("release stops before signing when the live test exits nonzero", async (t) => {
   const outcome = await runRelease(t, { live: 1 });
-  assert.match(String(outcome.error), /mise run test:live exited with 1/);
+  assert.match(String(outcome.error), /synthetic-npm run test:live exited with 1/);
   assert.equal(liveRuns(outcome), 1);
   assert.equal(outcome.signed, false);
   assert.equal(outcome.tagged, false);
@@ -204,7 +205,7 @@ test("release stops before signing when the live test exits nonzero", async (t) 
 test("release stops before signing when the live task cannot start", async (t) => {
   const outcome = await runRelease(t, { live: "spawn-error" });
   assert.ok(outcome.error instanceof Error);
-  assert.equal(outcome.error.message, "spawn mise ENOENT");
+  assert.equal(outcome.error.message, "spawn node ENOENT");
   assert.equal(liveRuns(outcome), 1);
   assert.equal(outcome.signed, false);
   assert.equal(outcome.tagged, false);

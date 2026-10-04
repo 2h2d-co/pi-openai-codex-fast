@@ -14,9 +14,6 @@ try {
     .sort()
     .map((file) => join("test", file));
   run(process.execPath, ["--test", "--test-concurrency=1", ...tests], {
-    // Bind in-process Pi to the repository dependency; an inherited PI_PACKAGE_DIR would
-    // otherwise select another runtime's package metadata.
-    PI_PACKAGE_DIR: join(root, "node_modules/@earendil-works/pi-coding-agent"),
     TEST_EXTENSION_PATH: join(temporary, "index.js"),
   });
 } finally {
@@ -24,9 +21,13 @@ try {
 }
 
 function run(command: string, args: string[], env: NodeJS.ProcessEnv = {}): void {
+  // In-process Pi finds the repository dependency itself; an inherited PI_PACKAGE_DIR would
+  // select another runtime's package metadata instead.
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  delete childEnv["PI_PACKAGE_DIR"];
   const result = spawnSync(command, args, {
     cwd: root,
-    env: { ...process.env, ...env },
+    env: childEnv,
     stdio: "inherit",
   });
   if (result.error) throw result.error;

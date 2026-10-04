@@ -45,11 +45,9 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         process.env["PI_TEST_CLI_PATH"] ??
           join(root, "node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"),
       );
-      const piRoot = resolve(dirname(cli), "../..");
       const env = {
         HOME: temporary,
         PI_CODING_AGENT_DIR: join(temporary, "agent"),
-        PI_PACKAGE_DIR: piRoot,
         PI_OFFLINE: "1",
         PI_TELEMETRY: "0",
         PI_FAST_LIVE_API_KEY: token,
