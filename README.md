@@ -72,8 +72,7 @@ openai-codex-fast/gpt-5.5
 
 ```bash
 mise run init
-npm run check # repository-wide hk quality gate
-npm test # integration tests for both direct TS loading and built JS
+mise run check # hk quality gate, both test suites, audit, and package contents
 npm run build
 npm run test:ts
 npm run test:js
