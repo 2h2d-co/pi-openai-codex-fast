@@ -2,7 +2,7 @@
 
 Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
 
-Requires Pi `>=1.0.1 <1.1.0`.
+Requires Pi `>=1.1.0 <1.2.0`.
 
 **Pi's virtual models are not supported.** Pi's experimental virtual models,
 registered with `pi.registerVirtualModel()`, are not tested with this package.
@@ -106,7 +106,7 @@ and CI skip it.
   the test; it never falls back to packing the worktree.
 - CLI: by default the test runs the repository's Pi development dependency.
   Set `PI_TEST_CLI_PATH` to another `cli.js` to test a different installation.
-  The peer range is `>=1.0.1 <1.1.0`, and the test asserts that the selected
+  The peer range is `>=1.1.0 <1.2.0`, and the test asserts that the selected
   CLI reports the version of the repository's Pi development dependency.
 - Runtime: `scripts/test-live.ts` reads the Codex bearer token through the
   repository Pi's `pi auth print-bearer-token` and passes it to the test
