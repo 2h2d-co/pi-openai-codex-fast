@@ -43,7 +43,7 @@
     "@2h2d/ts-config": "0.0.1",
     "@earendil-works/pi-ai": "1.1.0",
     "@earendil-works/pi-coding-agent": "1.1.0",
-    "@types/node": "22.20.4",
+    "@types/node": "22.20.5",
     "oxfmt": "0.70.0",
     "oxlint": "1.85.0",
     "oxlint-tsgolint": "7.0.2003",
