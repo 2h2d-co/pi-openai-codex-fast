@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
 import manifest from "../package.json" with { type: "json" };
+import { describeFailure, errorLog } from "./error-log.ts";
 import { archiveEntries, packageArchive } from "./package-archive.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -100,8 +101,10 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
           join(root, "test/cli-observer.ts"),
         ],
       };
+      const errors = errorLog(t);
       let client = new RpcClient(options);
       t.after(async () => client.stop());
+      client.onEvent(errors.rpcEvent);
       await client.start();
       async function turn(
         marker: string,
@@ -131,13 +134,14 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
         assert.equal(
           assistant.stopReason,
           "toolUse",
-          assistant.errorMessage ??
-            JSON.stringify(
-              assistant.content.map((block) => ({
-                type: block.type,
-                text: block.type === "text" ? block.text : undefined,
-              })),
-            ),
+          assistant.errorMessage !== undefined
+            ? describeFailure(assistant)
+            : JSON.stringify(
+                assistant.content.map((block) => ({
+                  type: block.type,
+                  text: block.type === "text" ? block.text : undefined,
+                })),
+              ),
         );
         const { usage } = assistant;
         assert.ok(usage.totalTokens > 0);
@@ -171,6 +175,7 @@ for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]
       await turn("SECOND", "bravo", true);
       await client.stop();
       client = new RpcClient(options);
+      client.onEvent(errors.rpcEvent);
       await client.start();
       await turn("SECOND", "charlie", true);
       const messageCount = (await client.getMessages()).length;
