@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { describeFailure, errorLog, redact } from "./error-log.ts";
+import { describeFailure, errorLog, redact } from "./support/error-log.ts";
 
 test("failed responses are summarized without provider error text", () => {
   const summary = describeFailure({

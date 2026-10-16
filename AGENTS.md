@@ -15,4 +15,5 @@ pi-openai-codex-fast is a Pi coding agent extension for exposing OpenAI Codex mo
   - push the release commit and tag atomically; do not use `git tag -a`, `git tag -s`, `git tag -m`, or `cog bump --annotated`.
   - The tag workflow creates the immutable GitHub release from the verified archive and the version's changelog section. Never create GitHub releases by hand.
 - Push stable or prerelease `vX.Y.Z*` tags and let CI stage the package with trusted publishing/provenance. CI derives `latest` for stable versions and the first prerelease identifier (`alpha`, `beta`, `rc`, etc.) for prereleases.
-- Live tests report every error they meet as a test diagnostic, even when they pass: extension error and warning notices, extension errors, and failed responses. Use `test/error-log.ts`. Summarize failed responses by stop reason, HTTP status, and error category; never print provider error text or credentials.
+- Live tests report every error they meet as a test diagnostic, even when they pass: extension error and warning notices, extension errors, and failed responses. Use `test/support/error-log.ts`. Summarize failed responses by stop reason, HTTP status, and error category; never print provider error text or credentials.
+- Keep tests in `test/*.test.ts`, code that tests import or load into Pi in `test/support/`, and test data in `test/fixtures/`.

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test, { type TestContext } from "node:test";
-import { archiveEntries, packageArchive } from "./package-archive.ts";
+import { archiveEntries, packageArchive } from "./support/package-archive.ts";
 
 // Every temporary directory here lacks a package.json, so an accidental npm pack fails loudly.
 async function temporaryDirectory(t: TestContext): Promise<string> {
