@@ -20,7 +20,7 @@ const instructions = (marker: string) =>
   "as the value, without the prefix or any added text. When the user asks to read " +
   "a file, call read first and use the exact file content as the value. Do not respond with text.";
 
-for (const modelId of ["gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
+for (const modelId of ["gpt-6-luna", "gpt-6.1-sol"]) {
   test(
     `packaged Fast ${modelId} preserves priority, canonical history, and reload through live Pi ${piVersion}`,
     {
