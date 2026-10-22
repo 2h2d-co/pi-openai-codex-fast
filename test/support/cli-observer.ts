@@ -36,8 +36,7 @@ export default function (pi: ExtensionAPI): void {
     }
     const markers = prompts.flatMap((prompt) => prompt.match(/FIRST|SECOND/g) ?? []);
     pi.appendEntry("release-test-tier", { priority, marker: markers.at(-1) });
-    // Make the synthetic tool round-trip deterministic rather than relying on
-    // the model to choose a tool over a text answer.
-    return { ...event.payload, tool_choice: "required" };
+    // The payload is not modified. Codex rejects `tool_choice: "required"` without a top-level
+    // `tools` field, and Pi's Codex adapter declares tools in `additional_tools` input items.
   });
 }

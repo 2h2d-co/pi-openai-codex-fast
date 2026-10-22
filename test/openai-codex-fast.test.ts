@@ -32,14 +32,13 @@ const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
-const MODEL_ID = "gpt-5.5";
+const MODEL_ID = "gpt-5.6-sol";
 const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"];
 const FAST_MODEL_IDS = [
   "gpt-6.1-sol",
   "gpt-6-astra",
   "gpt-6-luna",
   "gpt-6-sol",
-  "gpt-5.5",
   "gpt-5.6-luna",
   "gpt-5.6-terra",
   "gpt-5.6-sol",
@@ -583,13 +582,17 @@ test("registers fast models before session_start without requiring Codex auth", 
 
   assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
   const scope = await resolveModelScopeWithDiagnostics(
-    [`${FAST_PROVIDER}/gpt-5.6-sol`, `${FAST_PROVIDER}/gpt-5.6-terra`, `${FAST_PROVIDER}/gpt-5.5`],
+    [
+      `${FAST_PROVIDER}/gpt-5.6-sol`,
+      `${FAST_PROVIDER}/gpt-5.6-terra`,
+      `${FAST_PROVIDER}/gpt-5.6-luna`,
+    ],
     result.session.modelRuntime,
   );
   assert.deepEqual(scope.diagnostics, []);
   assert.deepEqual(
     scope.scopedModels.map(({ model }) => model.id),
-    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.5"],
+    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
   );
   await result.session.bindExtensions({});
   assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
@@ -663,8 +666,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.ok(normalModel);
     const normalCost = (10 * normalModel.cost.input + 5 * normalModel.cost.output) / 1_000_000;
     // Pi prices a requested priority tier even when Codex echoes "default".
-    const priorityMultiplier = modelId === "gpt-5.5" ? 2.5 : 2;
-    assert.ok(Math.abs(message.usage.cost.total - normalCost * priorityMultiplier) < 1e-12);
+    assert.ok(Math.abs(message.usage.cost.total - normalCost * 2) < 1e-12);
     await session.setModel(normalModel);
     await session.prompt("normal control", { expandPromptTemplates: false });
     assert.equal(server.requests.length, 2);
@@ -730,11 +732,25 @@ for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])
       updatedInput.some((item) => isJsonObject(item) && item["type"] === "additional_tools"),
     );
     assert.match(JSON.stringify(third.body), /Updated synthetic guidance/);
-    const remainingTools = third.body["tools"];
-    assert.ok(Array.isArray(remainingTools));
+    // Pi's Codex adapter declares every tool in `additional_tools` items and announces removals
+    // as text, because those items cannot remove a tool.
+    assert.equal(third.body["tools"], undefined);
+    const thirdInput = third.body["input"];
+    assert.ok(Array.isArray(thirdInput));
     assert.deepEqual(
-      remainingTools.filter(isJsonObject).map((tool) => tool["name"]),
-      ["audit_tool"],
+      thirdInput
+        .filter(isJsonObject)
+        .filter((item) => item["type"] === "additional_tools")
+        .map((item) =>
+          Array.isArray(item["tools"])
+            ? item["tools"].filter(isJsonObject).map((tool) => tool["name"])
+            : [],
+        ),
+      [["read"], ["audit_tool"]],
+    );
+    assert.match(
+      JSON.stringify(thirdInput),
+      /The following tools are no longer available\. Do not call them:\\n- read/,
     );
     assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
     assertCanonicalAssistantMessages(session);

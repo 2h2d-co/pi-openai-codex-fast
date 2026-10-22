@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- Require Pi `>=1.4.0 <1.5.0`.
+- Remove `gpt-5.5` from the fast-provider allowlist. Pi 1.4.0 removed it from `openai-codex`
+  because the Codex backend rejects it for ChatGPT accounts.
+
 ## 0.0.21 - 2026-10-17
 
 ### Changed
