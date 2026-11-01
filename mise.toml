@@ -19,10 +19,12 @@ zizmor = "1.30.1"
 
 [tasks.check]
 description = "Run all non-writing quality checks and tests"
+# Temporary: Pi 1.4.0 pins minimatch 10.2.6 (GHSA-g3hv-75wg-m249) in the Pi development
+# dependency. Restore the full audit once a Pi release ships minimatch 11.0.1 or later.
 run = [
   "hk check --all --check",
   "npm test",
-  "npm audit",
+  "npm audit --omit=dev",
   "npm pack --dry-run --allow-directory=all",
 ]
 
