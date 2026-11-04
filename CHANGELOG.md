@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.23 - 2026-11-04
+
 ### Added
 
 - Add `gpt-6.1-terra`, which Pi 1.5.0 adds to `openai-codex`, to the fast-provider allowlist.
