@@ -174,7 +174,7 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # Publishing deliberately uses the npm 11.20.0 client bundled with this Node.js
-          # release, not the npm 11.21.0 that mise.toml pins for the rest of the project.
+          # release, not the npm 11.21.2 that mise.toml pins for the rest of the project.
           node-version: "26.12.1"
           package-manager-cache: false
 
