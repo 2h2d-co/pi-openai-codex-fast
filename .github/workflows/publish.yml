@@ -175,12 +175,12 @@ jobs:
         with:
           # Publishing deliberately uses the npm 11.20.0 client bundled with this Node.js
           # release, not the npm 11.21.2 that mise.toml pins for the rest of the project.
-          node-version: "26.12.1"
+          node-version: "26.13.1"
           package-manager-cache: false
 
       - name: Verify npm publishing client
         run: |
-          test "$(node --version)" = v26.12.1
+          test "$(node --version)" = v26.13.1
           test "$(npm --version)" = 11.20.0
 
       - name: Download package archive
