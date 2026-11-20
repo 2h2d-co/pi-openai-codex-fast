@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- Expose `gpt-6.2-sol` and `gpt-6.2-astra` as fast models.
+
+### Fixed
+
+- Send thinking level off as effort `none`, as Pi 1.6.0's Codex adapter does. On GPT-6 models, switching thinking off now keeps the prompt cache, and fast requests match normal ones.
+
+### Changed
+
+- Require Pi `>=1.6.0 <1.7.0`.
+
 ## 0.0.25 - 2026-11-10
 
 ### Changed

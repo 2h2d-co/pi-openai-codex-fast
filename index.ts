@@ -24,6 +24,8 @@ const OPENAI_CODEX_FAST_PROVIDER = "openai-codex-fast";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const PLACEHOLDER_API_KEY = "__openai_codex_fast_reuses_openai_codex_auth__";
 const OPENAI_CODEX_FAST_MODEL_IDS = new Set([
+  "gpt-6.2-sol",
+  "gpt-6.2-astra",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
   "gpt-6-astra",
@@ -212,8 +214,11 @@ function streamSimpleOpenAICodexFast(
 
     const clampedReasoning = options?.reasoning
       ? clampThinkingLevel(codexModel, options.reasoning)
-      : undefined;
-    const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
+      : "off";
+    // Like Pi's Codex adapter, send off as effort `none`. Models that carry thinking changes in
+    // `configuration_update` items then keep the prompt cache when thinking is switched off.
+    const reasoningEffort =
+      clampedReasoning !== "off" ? clampedReasoning : codexModel.reasoning ? "none" : undefined;
     const requestOptions: OpenAICodexResponsesOptions = {
       ...options,
       apiKey: auth.value,

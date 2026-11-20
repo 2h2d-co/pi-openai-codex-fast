@@ -33,8 +33,10 @@ const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
 const MODEL_ID = "gpt-5.6-sol";
-const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"];
+const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-sol"];
 const FAST_MODEL_IDS = [
+  "gpt-6.2-sol",
+  "gpt-6.2-astra",
   "gpt-6.1-sol",
   "gpt-6.1-terra",
   "gpt-6-astra",
@@ -144,6 +146,26 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && isJsonValue(value) && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Pi's Codex adapter sends the system prompt as the first developer message in `input`, after
+ * any `additional_tools` items that declare its tools.
+ */
+function leadingPrompt(body: JsonObject): string {
+  assert.equal(body["instructions"], undefined);
+  const input = body["input"];
+  assert.ok(Array.isArray(input));
+  const index = input.findIndex(
+    (item) => !(isJsonObject(item) && item["type"] === "additional_tools"),
+  );
+  const first = input[index];
+  assert.ok(isJsonObject(first));
+  assert.equal(first["type"], undefined);
+  assert.equal(first["role"], "developer");
+  const content = first["content"];
+  assert.ok(isString(content));
+  return content;
 }
 
 function parseJsonObject(value: string): JsonObject {
@@ -635,18 +657,29 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
     assert.equal(request.body["model"], modelId);
     assert.equal(request.body["service_tier"], "priority");
-    assert.ok(isString(request.body["instructions"]));
-    assert.notEqual(request.body["instructions"], "You are a helpful assistant.");
-    // Thinking starts off. Models without an off level, such as GPT-6.1 Sol, clamp to
-    // `minimal`, which Pi's Codex adapter sends as low effort with reasoning summaries.
+    assert.notEqual(leadingPrompt(request.body), "You are a helpful assistant.");
+    // Thinking starts off, which Pi's Codex adapter sends as effort `none`. Models without an off
+    // level, such as GPT-6.1 Sol, clamp to `minimal`, which it sends as low effort. Models with
+    // mid-conversation effort keep `reasoning.effort` fixed and carry the effort in a trailing
+    // `configuration_update` item, so a thinking change keeps the prompt cache.
     const codexModel = session.modelRuntime.getModel(CODEX_PROVIDER, modelId);
     assert.ok(codexModel);
-    assert.deepEqual(
-      request.body["reasoning"],
-      codexModel.thinkingLevelMap?.off === null
-        ? { effort: "low", summary: "auto" }
-        : { effort: "none" },
-    );
+    const effort = codexModel.thinkingLevelMap?.off === null ? "low" : "none";
+    const input = request.body["input"];
+    assert.ok(Array.isArray(input));
+    if (
+      codexModel.compat !== undefined &&
+      "supportsMidConvoEffort" in codexModel.compat &&
+      codexModel.compat.supportsMidConvoEffort === true
+    ) {
+      assert.deepEqual(request.body["reasoning"], { effort: "medium", summary: "auto" });
+      assert.deepEqual(input.at(-1), { type: "configuration_update", reasoning: { effort } });
+    } else {
+      assert.deepEqual(request.body["reasoning"], { effort, summary: "auto" });
+      assert.ok(
+        !input.some((item) => isJsonObject(item) && item["type"] === "configuration_update"),
+      );
+    }
 
     const messages = assistantMessages(session);
     assert.equal(messages.length, 1);
@@ -682,7 +715,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
   });
 }
 
-for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"]) {
+for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-sol"]) {
   test(`${modelId} preserves transcript prompts and tool changes through the built-in Codex adapter`, async (t) => {
     const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }]);
     let guidance = "Initial synthetic guidance";
@@ -726,7 +759,7 @@ for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"])
     assert.doesNotMatch(JSON.stringify(first.body), /audit_tool/);
     assert.match(JSON.stringify(second.body), /Updated synthetic guidance/);
     assert.match(JSON.stringify(second.body), /audit_tool/);
-    assert.equal(second.body["instructions"], first.body["instructions"]);
+    assert.equal(leadingPrompt(second.body), leadingPrompt(first.body));
     const updatedInput = second.body["input"];
     assert.ok(Array.isArray(updatedInput));
     assert.ok(

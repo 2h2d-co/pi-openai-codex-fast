@@ -2,7 +2,7 @@
 
 Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
 
-Requires Pi `>=1.5.2 <1.6.0`.
+Requires Pi `>=1.6.0 <1.7.0`.
 
 **Pi's virtual models are not supported.** Pi's experimental virtual models,
 registered with `pi.registerVirtualModel()`, are not tested with this package.
@@ -14,6 +14,8 @@ Select an `openai-codex-fast` model directly.
 
 Currently exposed fast models:
 
+- `gpt-6.2-sol`
+- `gpt-6.2-astra`
 - `gpt-6.1-sol`
 - `gpt-6.1-terra`
 - `gpt-6-astra`
@@ -65,7 +67,7 @@ After install, log in to built-in Codex if needed:
 Then select a fast model with `/model`, for example:
 
 ```text
-openai-codex-fast/gpt-6.1-sol
+openai-codex-fast/gpt-6.2-sol
 ```
 
 ## Local development
@@ -91,7 +93,7 @@ affected.
 ### Live test
 
 Run `npm run test:live` to test the packed extension through the shipped Pi
-CLI with the existing Codex login. It exercises `gpt-6-luna` and `gpt-6.1-sol` at
+CLI with the existing Codex login. It exercises `gpt-6-luna` and `gpt-6.2-sol` at
 medium reasoning effort. Each model must pass priority requests and pricing,
 canonical tool history, prompt reload, session resume, a built-in file read, and
 the normal-tier control.
@@ -106,7 +108,7 @@ and CI skip it.
   the test; it never falls back to packing the worktree.
 - CLI: by default the test runs the repository's Pi development dependency.
   Set `PI_TEST_CLI_PATH` to another `cli.js` to test a different installation.
-  The peer range is `>=1.5.2 <1.6.0`, and the test asserts that the selected
+  The peer range is `>=1.6.0 <1.7.0`, and the test asserts that the selected
   CLI reports the version of the repository's Pi development dependency.
 - Runtime: `scripts/test-live.ts` reads the Codex bearer token through the
   repository Pi's `pi auth print-bearer-token` and passes it to the test

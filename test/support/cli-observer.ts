@@ -24,10 +24,11 @@ export default function (pi: ExtensionAPI): void {
     const tier = "service_tier" in event.payload ? event.payload.service_tier : undefined;
     const priority = ctx.model?.provider === "openai-codex-fast";
     assert.equal(tier, priority ? "priority" : undefined);
-    assert.ok("instructions" in event.payload && typeof event.payload.instructions === "string");
+    // Pi's Codex adapter sends the system prompt as a developer input item, not `instructions`.
+    assert.ok(!("instructions" in event.payload));
     assert.ok("input" in event.payload && Array.isArray(event.payload.input));
     const input: unknown[] = event.payload.input;
-    const prompts = [event.payload.instructions];
+    const prompts: string[] = [];
     for (const item of input) {
       assert.ok(item && typeof item === "object");
       if ("role" in item && item.role === "developer" && "content" in item) {
