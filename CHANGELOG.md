@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.26 - 2026-11-20
+
 ### Added
 
 - Expose `gpt-6.2-sol` and `gpt-6.2-astra` as fast models.
