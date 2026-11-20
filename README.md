@@ -93,8 +93,8 @@ affected.
 ### Live test
 
 Run `npm run test:live` to test the packed extension through the shipped Pi
-CLI with the existing Codex login. It exercises `gpt-6-luna` and `gpt-6.2-sol` at
-medium reasoning effort. Each model must pass priority requests and pricing,
+CLI with the existing Codex login. It exercises `gpt-6-luna`, `gpt-6.2-sol`, and
+`gpt-6.2-astra` at medium reasoning effort. Each model must pass priority requests and pricing,
 canonical tool history, prompt reload, session resume, a built-in file read, and
 the normal-tier control.
 Tests use isolated configuration and synthetic prompts. The default test suite
