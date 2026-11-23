@@ -36,7 +36,7 @@ const ULTRAFAST_PROVIDER = "openai-codex-ultrafast";
 const ULTRAFAST_API = "openai-codex-ultrafast-responses";
 const MODEL_ID = "gpt-5.6-sol";
 const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-sol"];
-const ULTRAFAST_MODEL_IDS = ["gpt-6.2-sol"];
+const ULTRAFAST_MODEL_IDS = ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol"];
 // OpenAI prices GPT-6.2 Ultrafast at 3 times Standard through February 28, 2027, Pacific time,
 // and at 6 times Standard from March 1, 2027.
 const GPT_6_2_ULTRAFAST_LIST_PRICE_FROM = Date.parse("2027-03-01T08:00:00Z");
@@ -62,7 +62,9 @@ const SPEED_CASES: SpeedCase[] = [
 
 function costMultiplier(speed: SpeedCase, timestamp: number): number {
   if (speed.serviceTier === "priority") return 2;
-  return timestamp < GPT_6_2_ULTRAFAST_LIST_PRICE_FROM ? 3 : 6;
+  return speed.modelId.startsWith("gpt-6.2-") && timestamp < GPT_6_2_ULTRAFAST_LIST_PRICE_FROM
+    ? 3
+    : 6;
 }
 const FAST_MODEL_IDS = [
   "gpt-6.2-sol",
@@ -675,8 +677,8 @@ test("loads through Pi's resource loader and registers real Fast and Ultrafast p
     .getModels(ULTRAFAST_PROVIDER)
     .filter((model) => model.provider === ULTRAFAST_PROVIDER);
   assert.deepEqual(
-    ultrafastModels.map((model) => model.id),
-    ULTRAFAST_MODEL_IDS,
+    ultrafastModels.map((model) => model.id).sort(),
+    [...ULTRAFAST_MODEL_IDS].sort(),
   );
   assert.ok(ultrafastModels.every((model) => model.api === ULTRAFAST_API));
   for (const model of ultrafastModels) {

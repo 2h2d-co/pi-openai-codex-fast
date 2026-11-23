@@ -25,15 +25,18 @@ Currently exposed fast models:
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
 
-Currently exposed ultrafast models:
+Currently exposed ultrafast models, the four models OpenAI offers Ultrafast for:
 
 - `gpt-6.2-sol`
+- `gpt-6.2-astra`
+- `gpt-6-astra`
+- `gpt-6.1-sol`
 
-Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast for
-GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces also include it for GPT-6.2
-Astra, GPT-6 Astra, and GPT-6.1 Sol, which this package does not expose yet. Plus, Pro $100,
-and Business do not include Ultrafast. When the plan lacks it, Codex accepts the request and
-answers at Standard speed without an error, while Pi still reports the Ultrafast cost.
+Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast only
+for GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces include it for all four
+models. Plus, Pro $100, and Business do not include Ultrafast. When the plan lacks it, Codex
+accepts the request and answers at Standard speed without an error, while Pi still reports the
+Ultrafast cost. With Pro $200, use `openai-codex-fast` for the other three models.
 
 Runtime behavior when `openai-codex-fast/<modelId>` or `openai-codex-ultrafast/<modelId>` is selected:
 
@@ -106,12 +109,13 @@ affected.
 
 Run `npm run test:live` to test the packed extension through the shipped Pi
 CLI with the existing Codex login. It exercises Fast on `gpt-6-luna`, `gpt-6.2-sol`, and
-`gpt-6.2-astra`, and Ultrafast on `gpt-6.2-sol`, at medium reasoning effort. Each case must
-pass its tier's requests and pricing, canonical tool history, prompt reload, session resume,
-a built-in file read, and the normal-tier control. Codex reports `default` as the tier of
-every response, so the Ultrafast case also requires Ultrafast to generate a long tool call at
-least 3 times as fast as Standard. That case needs a Codex login whose plan includes
-Ultrafast for GPT-6.2 Sol.
+`gpt-6.2-astra`, and Ultrafast on `gpt-6.2-sol` and `gpt-6.2-astra`, at medium reasoning
+effort. Each case must pass its tier's requests and pricing, canonical tool history, prompt
+reload, session resume, a built-in file read, and the normal-tier control. Codex reports
+`default` as the tier of every response, so the `gpt-6.2-sol` Ultrafast case also requires
+Ultrafast to generate a long tool call at least 3 times as fast as Standard. That case needs a
+Codex login whose plan includes Ultrafast for GPT-6.2 Sol. The `gpt-6.2-astra` Ultrafast case
+does not check speed, because Pro $200 serves its Ultrafast requests at Standard speed.
 Tests use isolated configuration and synthetic prompts. The default test suite
 and CI skip it.
 

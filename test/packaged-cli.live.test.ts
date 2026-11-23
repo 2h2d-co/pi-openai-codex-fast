@@ -29,7 +29,11 @@ const liveCases = [
     serviceTier: "priority",
     modelId,
   })),
-  { provider: "openai-codex-ultrafast", serviceTier: "ultrafast", modelId: "gpt-6.2-sol" },
+  ...["gpt-6.2-sol", "gpt-6.2-astra"].map((modelId) => ({
+    provider: "openai-codex-ultrafast",
+    serviceTier: "ultrafast",
+    modelId,
+  })),
 ] as const;
 
 for (const { provider, serviceTier, modelId } of liveCases) {
@@ -237,7 +241,9 @@ for (const { provider, serviceTier, modelId } of liveCases) {
       assert.equal(readResult.isError, false);
       await client.setModel("openai-codex", modelId);
       await turn("SECOND", "delta", false);
-      if (serviceTier === "ultrafast") {
+      // Every plan with Ultrafast includes GPT-6.2 Sol, so only Sol checks that Ultrafast generates
+      // faster. Pro $200 serves GPT-6.2 Astra's Ultrafast requests at Standard speed.
+      if (serviceTier === "ultrafast" && modelId === "gpt-6.2-sol") {
         // Codex echoes `default` for every tier and silently serves Standard speed when the plan
         // lacks Ultrafast, so only the generation speed shows that Ultrafast served the request.
         const standard = await generationSpeed();

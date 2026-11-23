@@ -56,9 +56,11 @@ const SPEED_PROVIDERS: readonly SpeedProvider[] = [
     name: "OpenAI Codex Ultrafast",
     api: "openai-codex-ultrafast-responses",
     serviceTier: "ultrafast",
-    // Codex accepts Ultrafast for any model and silently serves Standard speed when the account's
-    // plan does not include Ultrafast for that model.
-    modelIds: new Set(["gpt-6.2-sol"]),
+    // The models for which OpenAI offers Ultrafast in Codex. The plan decides which of them an
+    // account gets: Pro $200 includes only GPT-6.2 Sol, and Pro $500 includes all four. Codex
+    // accepts the tier for any model and silently serves Standard speed when the plan does not
+    // include the model.
+    modelIds: new Set(["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol"]),
   },
 ];
 
