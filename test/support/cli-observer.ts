@@ -22,8 +22,13 @@ export default function (pi: ExtensionAPI): void {
     assert.ok("model" in event.payload);
     assert.equal(event.payload.model, ctx.model?.id);
     const tier = "service_tier" in event.payload ? event.payload.service_tier : undefined;
-    const priority = ctx.model?.provider === "openai-codex-fast";
-    assert.equal(tier, priority ? "priority" : undefined);
+    const serviceTier =
+      ctx.model?.provider === "openai-codex-fast"
+        ? "priority"
+        : ctx.model?.provider === "openai-codex-ultrafast"
+          ? "ultrafast"
+          : null;
+    assert.equal(tier, serviceTier ?? undefined);
     // Pi's Codex adapter sends the system prompt as a developer input item, not `instructions`.
     assert.ok(!("instructions" in event.payload));
     assert.ok("input" in event.payload && Array.isArray(event.payload.input));
@@ -36,7 +41,7 @@ export default function (pi: ExtensionAPI): void {
       }
     }
     const markers = prompts.flatMap((prompt) => prompt.match(/FIRST|SECOND/g) ?? []);
-    pi.appendEntry("release-test-tier", { priority, marker: markers.at(-1) });
+    pi.appendEntry("release-test-tier", { serviceTier, marker: markers.at(-1) });
     // The payload is not modified. Codex rejects `tool_choice: "required"` without a top-level
     // `tools` field, and Pi's Codex adapter declares tools in `additional_tools` input items.
   });

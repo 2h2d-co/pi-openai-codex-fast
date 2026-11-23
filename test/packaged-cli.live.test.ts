@@ -20,9 +20,21 @@ const instructions = (marker: string) =>
   "as the value, without the prefix or any added text. When the user asks to read " +
   "a file, call read first and use the exact file content as the value. Do not respond with text.";
 
-for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
+// OpenAI prices GPT-6.2 Ultrafast at 3 times Standard through February 28, 2027, Pacific time,
+// and at 6 times Standard from March 1, 2027.
+const GPT_6_2_ULTRAFAST_LIST_PRICE_FROM = Date.parse("2027-03-01T08:00:00Z");
+const liveCases = [
+  ...["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"].map((modelId) => ({
+    provider: "openai-codex-fast",
+    serviceTier: "priority",
+    modelId,
+  })),
+  { provider: "openai-codex-ultrafast", serviceTier: "ultrafast", modelId: "gpt-6.2-sol" },
+] as const;
+
+for (const { provider, serviceTier, modelId } of liveCases) {
   test(
-    `packaged Fast ${modelId} preserves priority, canonical history, and reload through live Pi ${piVersion}`,
+    `packaged ${provider}/${modelId} preserves ${serviceTier}, canonical history, and reload through live Pi ${piVersion}`,
     {
       skip: process.env["PI_FAST_LIVE_TEST"] !== "1",
       timeout: 240_000,
@@ -80,7 +92,7 @@ for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
         cliPath: cli,
         cwd: temporary,
         env,
-        provider: "openai-codex-fast",
+        provider,
         model: modelId,
         args: [
           "--offline",
@@ -108,12 +120,12 @@ for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
       async function turn(
         marker: string,
         value: string,
-        priority: boolean,
+        speed: boolean,
         prompt: string = `user value: ${value}`,
       ): Promise<void> {
         const state = await client.getState();
         assert.ok(state.model);
-        assert.equal(state.model?.provider, priority ? "openai-codex-fast" : "openai-codex");
+        assert.equal(state.model?.provider, speed ? provider : "openai-codex");
         assert.equal(state.model?.id, modelId);
         const events = await client.promptAndWait(prompt, undefined, 90_000);
         assert.deepEqual(
@@ -144,13 +156,20 @@ for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
         );
         const { usage } = assistant;
         assert.ok(usage.totalTokens > 0);
+        const multiplier = !speed
+          ? 1
+          : serviceTier === "priority"
+            ? 2
+            : assistant.timestamp < GPT_6_2_ULTRAFAST_LIST_PRICE_FROM
+              ? 3
+              : 6;
         const expectedCost =
           ((usage.input * state.model.cost.input +
             usage.output * state.model.cost.output +
             usage.cacheRead * state.model.cost.cacheRead +
             usage.cacheWrite * state.model.cost.cacheWrite) /
             1_000_000) *
-          (priority ? 2 : 1);
+          multiplier;
         assert.ok(expectedCost > 0);
         assert.ok(Math.abs(usage.cost.total - expectedCost) < 1e-12);
         const call = assistant.content.find((block) => block.type === "toolCall");
@@ -164,10 +183,36 @@ for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
           .at(-1);
         assert.ok(entry?.type === "custom");
         // Verify the submitted prompt independently of the model's adherence.
-        assert.deepEqual(entry.data, { priority, marker });
+        assert.deepEqual(entry.data, { serviceTier: speed ? serviceTier : null, marker });
         assert.deepEqual(call.arguments, { marker, value });
         assert.doesNotMatch(client.getStderr(), /Failed to load extension|not a function/);
       }
+      /**
+       * Characters per second in which the model generates a long verify_release call, measured
+       * from its first to its last streamed tool-call event.
+       */
+      async function generationSpeed(): Promise<number> {
+        const value = Array.from({ length: 250 }, (_, index) => String(index + 1)).join(" ");
+        let start: number | undefined;
+        let end: number | undefined;
+        let characters = 0;
+        const unsubscribe = client.onEvent((event) => {
+          if (event.type !== "message_update") return;
+          const update = event.assistantMessageEvent;
+          if (update.type === "toolcall_start") start = performance.now();
+          if (update.type === "toolcall_delta") characters += update.delta.length;
+          if (update.type === "toolcall_end") end = performance.now();
+        });
+        try {
+          await turn("SECOND", value, (await client.getState()).model?.provider === provider);
+        } finally {
+          unsubscribe();
+        }
+        assert.ok(start !== undefined && end !== undefined, "The tool call was streamed.");
+        assert.ok(characters >= value.length, "The streamed tool call carries the value.");
+        return characters / (Math.max(end - start, 1) / 1_000);
+      }
+
       await turn("FIRST", "alpha", true);
       await writeFile(join(env.PI_CODING_AGENT_DIR, "SYSTEM.md"), instructions("SECOND"));
       await client.prompt("/release-test-reload");
@@ -192,9 +237,23 @@ for (const modelId of ["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"]) {
       assert.equal(readResult.isError, false);
       await client.setModel("openai-codex", modelId);
       await turn("SECOND", "delta", false);
+      if (serviceTier === "ultrafast") {
+        // Codex echoes `default` for every tier and silently serves Standard speed when the plan
+        // lacks Ultrafast, so only the generation speed shows that Ultrafast served the request.
+        const standard = await generationSpeed();
+        await client.setModel(provider, modelId);
+        const ultrafast = await generationSpeed();
+        t.diagnostic(
+          `Tool-call generation: Standard ${standard.toFixed(0)} and Ultrafast ${ultrafast.toFixed(0)} characters per second`,
+        );
+        assert.ok(
+          ultrafast >= standard * 3,
+          `Ultrafast generated ${ultrafast.toFixed(0)} characters per second, Standard ${standard.toFixed(0)}`,
+        );
+      }
       await client.stop();
       t.diagnostic(
-        `Pi ${piVersion} ${modelId}: packed extension, live priority requests, canonical tool history, prompt reload, resume, built-in read, and normal-tier control passed`,
+        `Pi ${piVersion} ${provider}/${modelId}: packed extension, live ${serviceTier} requests, canonical tool history, prompt reload, resume, built-in read, and normal-tier control passed`,
       );
     },
   );

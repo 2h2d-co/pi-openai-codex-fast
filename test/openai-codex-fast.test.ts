@@ -32,8 +32,38 @@ const CODEX_PROVIDER = "openai-codex";
 const CODEX_API = "openai-codex-responses";
 const FAST_PROVIDER = "openai-codex-fast";
 const FAST_API = "openai-codex-fast-responses";
+const ULTRAFAST_PROVIDER = "openai-codex-ultrafast";
+const ULTRAFAST_API = "openai-codex-ultrafast-responses";
 const MODEL_ID = "gpt-5.6-sol";
 const BEHAVIOR_MODEL_IDS = [MODEL_ID, "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-sol"];
+const ULTRAFAST_MODEL_IDS = ["gpt-6.2-sol"];
+// OpenAI prices GPT-6.2 Ultrafast at 3 times Standard through February 28, 2027, Pacific time,
+// and at 6 times Standard from March 1, 2027.
+const GPT_6_2_ULTRAFAST_LIST_PRICE_FROM = Date.parse("2027-03-01T08:00:00Z");
+
+type SpeedCase = {
+  provider: typeof FAST_PROVIDER | typeof ULTRAFAST_PROVIDER;
+  serviceTier: "priority" | "ultrafast";
+  modelId: string;
+};
+
+const SPEED_CASES: SpeedCase[] = [
+  ...BEHAVIOR_MODEL_IDS.map((modelId): SpeedCase => ({
+    provider: FAST_PROVIDER,
+    serviceTier: "priority",
+    modelId,
+  })),
+  ...ULTRAFAST_MODEL_IDS.map((modelId): SpeedCase => ({
+    provider: ULTRAFAST_PROVIDER,
+    serviceTier: "ultrafast",
+    modelId,
+  })),
+];
+
+function costMultiplier(speed: SpeedCase, timestamp: number): number {
+  if (speed.serviceTier === "priority") return 2;
+  return timestamp < GPT_6_2_ULTRAFAST_LIST_PRICE_FROM ? 3 : 6;
+}
 const FAST_MODEL_IDS = [
   "gpt-6.2-sol",
   "gpt-6.2-astra",
@@ -521,11 +551,15 @@ async function createIntegrationSession(
   return result;
 }
 
-async function selectFastModel(session: AgentSession, modelId = MODEL_ID): Promise<Model<Api>> {
-  const fastModel = session.modelRuntime.getModel(FAST_PROVIDER, modelId);
-  assert.ok(fastModel, `Expected registered ${FAST_PROVIDER}/${modelId} model`);
+async function selectFastModel(
+  session: AgentSession,
+  modelId = MODEL_ID,
+  provider: SpeedCase["provider"] = FAST_PROVIDER,
+): Promise<Model<Api>> {
+  const fastModel = session.modelRuntime.getModel(provider, modelId);
+  assert.ok(fastModel, `Expected registered ${provider}/${modelId} model`);
   await session.setModel(fastModel);
-  assert.equal(session.model?.provider, FAST_PROVIDER);
+  assert.equal(session.model?.provider, provider);
   assert.equal(session.model?.id, modelId);
   return fastModel;
 }
@@ -589,7 +623,7 @@ test("registers fast models before session_start without requiring Codex auth", 
 
   const extensionsResult = resourceLoader.getExtensions();
   assert.equal(extensionsResult.extensions.length, 1);
-  assert.equal(extensionsResult.runtime.pendingProviderRegistrations.length, 1);
+  assert.equal(extensionsResult.runtime.pendingProviderRegistrations.length, 2);
   assert.deepEqual(extensionsResult.errors, []);
 
   const result = await createAgentSession({
@@ -609,19 +643,25 @@ test("registers fast models before session_start without requiring Codex auth", 
       `${FAST_PROVIDER}/gpt-5.6-sol`,
       `${FAST_PROVIDER}/gpt-5.6-terra`,
       `${FAST_PROVIDER}/gpt-5.6-luna`,
+      `${ULTRAFAST_PROVIDER}/gpt-6.2-sol`,
     ],
     result.session.modelRuntime,
   );
   assert.deepEqual(scope.diagnostics, []);
   assert.deepEqual(
-    scope.scopedModels.map(({ model }) => model.id),
-    ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    scope.scopedModels.map(({ model }) => `${model.provider}/${model.id}`),
+    [
+      `${FAST_PROVIDER}/gpt-5.6-sol`,
+      `${FAST_PROVIDER}/gpt-5.6-terra`,
+      `${FAST_PROVIDER}/gpt-5.6-luna`,
+      `${ULTRAFAST_PROVIDER}/gpt-6.2-sol`,
+    ],
   );
   await result.session.bindExtensions({});
   assert.ok(result.session.modelRuntime.getModel(FAST_PROVIDER, MODEL_ID));
 });
 
-test("loads through Pi's resource loader and registers a real fast provider", async (t) => {
+test("loads through Pi's resource loader and registers real Fast and Ultrafast providers", async (t) => {
   const { session } = await createIntegrationSession(t);
   const fastModels = session.modelRuntime
     .getModels(FAST_PROVIDER)
@@ -631,12 +671,28 @@ test("loads through Pi's resource loader and registers a real fast provider", as
   assert.ok(fastModels.every((model) => model.api === FAST_API));
   assert.ok(!fastModels.some((model) => model.id === "gpt-5.2"));
   assert.ok(!fastModels.some((model) => model.id === "gpt-5.4" || model.id === "gpt-5.4-mini"));
+  const ultrafastModels = session.modelRuntime
+    .getModels(ULTRAFAST_PROVIDER)
+    .filter((model) => model.provider === ULTRAFAST_PROVIDER);
+  assert.deepEqual(
+    ultrafastModels.map((model) => model.id),
+    ULTRAFAST_MODEL_IDS,
+  );
+  assert.ok(ultrafastModels.every((model) => model.api === ULTRAFAST_API));
+  for (const model of ultrafastModels) {
+    const codexModel = session.modelRuntime.getModel(CODEX_PROVIDER, model.id);
+    assert.ok(codexModel);
+    // Usage is priced from the Standard catalog rates and multiplied per request.
+    assert.deepEqual(model.cost, codexModel.cost);
+    assert.equal(model.contextWindow, codexModel.contextWindow);
+  }
   assert.equal(session.extensionRunner.hasHandlers("session_start"), true);
   assert.equal(session.extensionRunner.hasHandlers("session_tree"), false);
 });
 
-for (const modelId of BEHAVIOR_MODEL_IDS) {
-  test(`${modelId} uses priority with canonical history and preserves the normal-tier control`, async (t) => {
+for (const speed of SPEED_CASES) {
+  const { provider, serviceTier, modelId } = speed;
+  test(`${provider}/${modelId} uses ${serviceTier} with canonical history and preserves the normal-tier control`, async (t) => {
     const server = await startCodexServer(t, [
       { events: textResponseEvents("fast ok") },
       { events: textResponseEvents("normal ok", "resp_normal") },
@@ -646,7 +702,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       modelId,
     });
 
-    await selectFastModel(session, modelId);
+    await selectFastModel(session, modelId, provider);
     await session.prompt("hello from integration", { expandPromptTemplates: false });
 
     assert.equal(server.requests.length, 1);
@@ -656,7 +712,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.equal(request.url, "/codex/responses");
     assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
     assert.equal(request.body["model"], modelId);
-    assert.equal(request.body["service_tier"], "priority");
+    assert.equal(request.body["service_tier"], serviceTier);
     assert.notEqual(leadingPrompt(request.body), "You are a helpful assistant.");
     // Thinking starts off, which Pi's Codex adapter sends as effort `none`. Models without an off
     // level, such as GPT-6.1 Sol, clamp to `minimal`, which it sends as low effort. Models with
@@ -699,8 +755,11 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     const normalModel = session.modelRuntime.getModel(CODEX_PROVIDER, modelId);
     assert.ok(normalModel);
     const normalCost = (10 * normalModel.cost.input + 5 * normalModel.cost.output) / 1_000_000;
-    // Pi prices a requested priority tier even when Codex echoes "default".
-    assert.ok(Math.abs(message.usage.cost.total - normalCost * 2) < 1e-12);
+    // The requested tier is priced even when Codex echoes "default", as Codex always does.
+    assert.ok(
+      Math.abs(message.usage.cost.total - normalCost * costMultiplier(speed, message.timestamp)) <
+        1e-12,
+    );
     await session.setModel(normalModel);
     await session.prompt("normal control", { expandPromptTemplates: false });
     assert.equal(server.requests.length, 2);
@@ -796,8 +855,8 @@ for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", 
   });
 }
 
-for (const modelId of BEHAVIOR_MODEL_IDS) {
-  test(`${modelId} remaps fast context overflow errors and lets Pi compact and retry`, async (t) => {
+for (const { provider, serviceTier, modelId } of SPEED_CASES) {
+  test(`${provider}/${modelId} remaps context overflow errors and lets Pi compact and retry`, async (t) => {
     const server = await startCodexServer(t, [
       { events: textResponseEvents("seed ok", "resp_seed") },
       { events: contextOverflowResponseEvents() },
@@ -830,13 +889,13 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       }
     });
 
-    await selectFastModel(session, modelId);
+    await selectFastModel(session, modelId, provider);
     await session.prompt("seed history", { expandPromptTemplates: false });
     await session.prompt("overflow then recover", { expandPromptTemplates: false });
 
     const modelRequests = server.requests.filter((request) => request.body["model"] === modelId);
     assert.equal(modelRequests.length, 5);
-    assert.ok(modelRequests.every((request) => request.body["service_tier"] === "priority"));
+    assert.ok(modelRequests.every((request) => request.body["service_tier"] === serviceTier));
     assert.deepEqual(compactionEvents, [
       { reason: "overflow" },
       { reason: "overflow", willRetry: true, errorMessage: undefined },
@@ -859,7 +918,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.equal(seedSuccess.provider, CODEX_PROVIDER);
     assert.equal(seedSuccess.api, CODEX_API);
     assert.equal(overflowError.stopReason, "error");
-    assert.equal(overflowError.provider, FAST_PROVIDER);
+    assert.equal(overflowError.provider, provider);
     assert.equal(overflowError.api, CODEX_API);
     assert.match(overflowError.errorMessage ?? "", /exceeds the context window/i);
     assert.equal(retrySuccess.stopReason, "stop");
@@ -872,7 +931,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.equal(content.text, "recovered after compaction");
   });
 
-  test(`${modelId} stores tool-calling fast replies canonically through the real Pi agent loop`, async (t) => {
+  test(`${provider}/${modelId} stores tool-calling replies canonically through the real Pi agent loop`, async (t) => {
     const server = await startCodexServer(t, [
       { events: toolCallResponseEvents() },
       { events: textResponseEvents("tool follow-up complete", "resp_after_tool") },
@@ -882,11 +941,11 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       modelId,
     });
 
-    await selectFastModel(session, modelId);
+    await selectFastModel(session, modelId, provider);
     await session.prompt("please call a tool", { expandPromptTemplates: false });
 
     assert.equal(server.requests.length, 2);
-    assert.ok(server.requests.every((request) => request.body["service_tier"] === "priority"));
+    assert.ok(server.requests.every((request) => request.body["service_tier"] === serviceTier));
 
     const messages = assistantMessages(session);
     assert.equal(messages.length, 2);
@@ -908,7 +967,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assertCanonicalAssistantMessages(session);
   });
 
-  test(`${modelId} stores fast setup errors canonically without sending a provider request`, async (t) => {
+  test(`${provider}/${modelId} stores setup errors canonically without sending a provider request`, async (t) => {
     const server = await startCodexServer(t, [
       { events: textResponseEvents("should not be requested") },
     ]);
@@ -917,7 +976,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       modelId,
     });
 
-    await selectFastModel(session, modelId);
+    await selectFastModel(session, modelId, provider);
     await session.modelRuntime.logout(CODEX_PROVIDER);
     await session.prompt("this should fail before fetch", { expandPromptTemplates: false });
 
@@ -933,7 +992,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
     assert.match(message.errorMessage, /No openai-codex auth found/);
   });
 
-  test(`${modelId} recovers fast mode through Pi session_start for every supported reason`, async (t) => {
+  test(`${provider}/${modelId} recovers its provider through Pi session_start for every supported reason`, async (t) => {
     for (const reason of SESSION_START_REASONS) {
       const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-recovery-"));
       const cwd = join(tempRoot, "cwd");
@@ -941,7 +1000,7 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
       const sessionManager = SessionManager.inMemory(cwd);
-      sessionManager.appendModelChange(FAST_PROVIDER, modelId);
+      sessionManager.appendModelChange(provider, modelId);
       sessionManager.appendMessage({
         role: "user",
         content: "prior message",
@@ -954,31 +1013,31 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
         sessionManager,
         sessionStartReason: reason,
       });
-      assert.notEqual(session.model?.provider, FAST_PROVIDER);
+      assert.notEqual(session.model?.provider, provider);
 
       await session.bindExtensions({});
-      assert.equal(session.model?.provider, FAST_PROVIDER, reason);
+      assert.equal(session.model?.provider, provider, reason);
       assert.equal(session.model?.id, modelId, reason);
     }
   });
 
-  test(`${modelId} does not recover fast mode when the latest overall model_change is not fast`, async (t) => {
-    for (const provider of [CODEX_PROVIDER, "anthropic"]) {
+  test(`${provider}/${modelId} is not recovered when the latest overall model_change is another provider`, async (t) => {
+    for (const latest of [CODEX_PROVIDER, "anthropic"]) {
       const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-no-recovery-"));
       const cwd = join(tempRoot, "cwd");
       await mkdir(cwd, { recursive: true });
       t.after(async () => rm(tempRoot, { recursive: true, force: true }));
 
       const sessionManager = SessionManager.inMemory(cwd);
-      sessionManager.appendModelChange(FAST_PROVIDER, modelId);
+      sessionManager.appendModelChange(provider, modelId);
       sessionManager.appendMessage({
         role: "user",
         content: "prior fast branch",
         timestamp: Date.now(),
       });
       sessionManager.appendModelChange(
-        provider,
-        provider === CODEX_PROVIDER ? modelId : "claude-sonnet",
+        latest,
+        latest === CODEX_PROVIDER ? modelId : "claude-sonnet",
       );
       sessionManager.appendMessage({
         role: "user",
@@ -994,7 +1053,70 @@ for (const modelId of BEHAVIOR_MODEL_IDS) {
       });
       await session.bindExtensions({});
 
-      assert.notEqual(session.model?.provider, FAST_PROVIDER, provider);
+      assert.notEqual(session.model?.provider, provider, latest);
     }
   });
 }
+
+test("openai-codex-ultrafast prices GPT-6.2 Sol at the promotional rate until March 1, 2027, Pacific time", async (t) => {
+  const server = await startCodexServer(t, [
+    { events: textResponseEvents("promotion ok", "resp_promotion") },
+    { events: textResponseEvents("list ok", "resp_list") },
+  ]);
+  // Mock the clock before the session starts, so the test credential is valid at that time.
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2027-02-28T23:59:59-08:00") });
+  const { session } = await createIntegrationSession(t, {
+    codexBaseUrl: server.baseUrl,
+    modelId: "gpt-6.2-sol",
+  });
+  await selectFastModel(session, "gpt-6.2-sol", ULTRAFAST_PROVIDER);
+  const codexModel = session.modelRuntime.getModel(CODEX_PROVIDER, "gpt-6.2-sol");
+  assert.ok(codexModel);
+  const standardCost = (10 * codexModel.cost.input + 5 * codexModel.cost.output) / 1_000_000;
+
+  await session.prompt("last promotional second", { expandPromptTemplates: false });
+  t.mock.timers.setTime(Date.parse("2027-03-01T00:00:00-08:00"));
+  await session.prompt("first list-price second", { expandPromptTemplates: false });
+
+  const [promotion, list] = assistantMessages(session);
+  assert.ok(promotion);
+  assert.ok(list);
+  assert.equal(server.requests.length, 2);
+  assert.ok(server.requests.every((request) => request.body["service_tier"] === "ultrafast"));
+  assert.ok(Math.abs(promotion.usage.cost.total - standardCost * 3) < 1e-12);
+  assert.ok(Math.abs(list.usage.cost.total - standardCost * 6) < 1e-12);
+  assert.ok(
+    Math.abs(list.usage.cost.input - ((10 * codexModel.cost.input) / 1_000_000) * 6) < 1e-12,
+  );
+  assert.ok(
+    Math.abs(list.usage.cost.output - ((5 * codexModel.cost.output) / 1_000_000) * 6) < 1e-12,
+  );
+});
+
+test("session_start recovers the latest of the Fast and Ultrafast providers", async (t) => {
+  for (const [earlier, latest] of [
+    [FAST_PROVIDER, ULTRAFAST_PROVIDER],
+    [ULTRAFAST_PROVIDER, FAST_PROVIDER],
+  ] as const) {
+    const tempRoot = await mkdtemp(join(tmpdir(), "pi-openai-codex-fast-switch-"));
+    const cwd = join(tempRoot, "cwd");
+    await mkdir(cwd, { recursive: true });
+    t.after(async () => rm(tempRoot, { recursive: true, force: true }));
+
+    const sessionManager = SessionManager.inMemory(cwd);
+    sessionManager.appendModelChange(earlier, "gpt-6.2-sol");
+    sessionManager.appendMessage({ role: "user", content: "earlier", timestamp: Date.now() });
+    sessionManager.appendModelChange(latest, "gpt-6.2-sol");
+    sessionManager.appendMessage({ role: "user", content: "latest", timestamp: Date.now() });
+
+    const { session } = await createIntegrationSession(t, {
+      bindExtensions: false,
+      modelId: "gpt-6.2-sol",
+      sessionManager,
+      sessionStartReason: "resume",
+    });
+    await session.bindExtensions({});
+    assert.equal(session.model?.provider, latest);
+    assert.equal(session.model?.id, "gpt-6.2-sol");
+  }
+});

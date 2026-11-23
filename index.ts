@@ -5,6 +5,7 @@ import type {
   ProviderModelConfig,
 } from "@earendil-works/pi-coding-agent";
 import {
+  calculateCost,
   clampThinkingLevel,
   createAssistantMessageEventStream,
   getModels,
@@ -18,49 +19,81 @@ import {
   type TranscriptContext,
 } from "@earendil-works/pi-ai/compat";
 
-const OPENAI_CODEX_FAST_API = "openai-codex-fast-responses";
 const OPENAI_CODEX_API = "openai-codex-responses";
-const OPENAI_CODEX_FAST_PROVIDER = "openai-codex-fast";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 const PLACEHOLDER_API_KEY = "__openai_codex_fast_reuses_openai_codex_auth__";
-const OPENAI_CODEX_FAST_MODEL_IDS = new Set([
-  "gpt-6.2-sol",
-  "gpt-6.2-astra",
-  "gpt-6.1-sol",
-  "gpt-6.1-terra",
-  "gpt-6-astra",
-  "gpt-6-luna",
-  "gpt-6-sol",
-  "gpt-5.6-luna",
-  "gpt-5.6-terra",
-  "gpt-5.6-sol",
-]);
+
+/** A provider that sends built-in Codex models through a faster service tier. */
+type SpeedProvider = {
+  provider: string;
+  name: string;
+  api: string;
+  serviceTier: "priority" | "ultrafast";
+  modelIds: ReadonlySet<string>;
+};
+
+const SPEED_PROVIDERS: readonly SpeedProvider[] = [
+  {
+    provider: "openai-codex-fast",
+    name: "OpenAI Codex Fast",
+    api: "openai-codex-fast-responses",
+    serviceTier: "priority",
+    modelIds: new Set([
+      "gpt-6.2-sol",
+      "gpt-6.2-astra",
+      "gpt-6.1-sol",
+      "gpt-6.1-terra",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-6-sol",
+      "gpt-5.6-luna",
+      "gpt-5.6-terra",
+      "gpt-5.6-sol",
+    ]),
+  },
+  {
+    provider: "openai-codex-ultrafast",
+    name: "OpenAI Codex Ultrafast",
+    api: "openai-codex-ultrafast-responses",
+    serviceTier: "ultrafast",
+    // Codex accepts Ultrafast for any model and silently serves Standard speed when the account's
+    // plan does not include Ultrafast for that model.
+    modelIds: new Set(["gpt-6.2-sol"]),
+  },
+];
+
+// Ultrafast costs 6 times the Standard rate. GPT-6.2 models cost 3 times the Standard rate through
+// February 28, 2027, Pacific time.
+const GPT_6_2_ULTRAFAST_LIST_PRICE_FROM = Date.parse("2027-03-01T00:00:00-08:00");
 
 type ExtensionDiagnostic = {
   type: "warning" | "error";
-  code: "auth-failed" | "missing-openai-codex-auth" | "no-fast-models" | "no-model-base-url";
+  code: "auth-failed" | "missing-openai-codex-auth" | "no-models" | "no-model-base-url";
+  provider: string;
   message: string;
 };
 
 type Result<T> = { ok: true; value: T } | { ok: false; diagnostic: ExtensionDiagnostic };
 type OpenAICodexApi = typeof OPENAI_CODEX_API;
 
-function authFailedDiagnostic(reason: string): ExtensionDiagnostic {
+function authFailedDiagnostic(provider: string, reason: string): ExtensionDiagnostic {
   return {
     type: "error",
     code: "auth-failed",
+    provider,
     message: `${OPENAI_CODEX_PROVIDER} auth failed: ${reason}`,
   };
 }
 
 async function getOpenAICodexAuth(
+  provider: string,
   modelRegistry: ModelRegistry,
   model: Model<OpenAICodexApi>,
 ): Promise<Result<string>> {
   try {
     const auth = await modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) {
-      return { ok: false, diagnostic: authFailedDiagnostic(auth.error) };
+      return { ok: false, diagnostic: authFailedDiagnostic(provider, auth.error) };
     }
     if (auth.apiKey) {
       return { ok: true, value: auth.apiKey };
@@ -71,6 +104,7 @@ async function getOpenAICodexAuth(
       diagnostic: {
         type: "error",
         code: "missing-openai-codex-auth",
+        provider,
         message: `No ${OPENAI_CODEX_PROVIDER} auth found. Log in to ${OPENAI_CODEX_PROVIDER} first.`,
       },
     };
@@ -80,16 +114,17 @@ async function getOpenAICodexAuth(
     }
     return {
       ok: false,
-      diagnostic: authFailedDiagnostic(error.message),
+      diagnostic: authFailedDiagnostic(provider, error.message),
     };
   }
 }
 
-function getOpenAICodexFastModels(
+function getSpeedModels(
+  speed: SpeedProvider,
   openAICodexModels: readonly Model<OpenAICodexApi>[],
 ): ProviderModelConfig[] {
   return openAICodexModels
-    .filter((model) => OPENAI_CODEX_FAST_MODEL_IDS.has(model.id))
+    .filter((model) => speed.modelIds.has(model.id))
     .map((model): ProviderModelConfig => {
       const config: ProviderModelConfig = {
         id: model.id,
@@ -114,33 +149,55 @@ function getOpenAICodexFastModels(
     });
 }
 
-function getFastProviderBaseUrl(
-  openAICodexFastModels: readonly ProviderModelConfig[],
+function getProviderBaseUrl(
+  provider: string,
+  models: readonly ProviderModelConfig[],
 ): Result<string> {
-  if (openAICodexFastModels.length === 0) {
+  if (models.length === 0) {
     return {
       ok: false,
       diagnostic: {
         type: "error",
-        code: "no-fast-models",
-        message: `No models available for ${OPENAI_CODEX_FAST_PROVIDER}. The provider will not be registered.`,
+        code: "no-models",
+        provider,
+        message: `No models available for ${provider}. The provider will not be registered.`,
       },
     };
   }
 
-  const baseUrl = openAICodexFastModels.find((model) => model.baseUrl)?.baseUrl;
+  const baseUrl = models.find((model) => model.baseUrl)?.baseUrl;
   if (!baseUrl) {
     return {
       ok: false,
       diagnostic: {
         type: "error",
         code: "no-model-base-url",
-        message: `No base URL found for any ${OPENAI_CODEX_FAST_PROVIDER} model. The provider will not be registered.`,
+        provider,
+        message: `No base URL found for any ${provider} model. The provider will not be registered.`,
       },
     };
   }
 
   return { ok: true, value: baseUrl };
+}
+
+/** The multiple of the Standard rate that an Ultrafast request started at `timestamp` costs. */
+function ultrafastCostMultiplier(modelId: string, timestamp: number): number {
+  return modelId.startsWith("gpt-6.2-") && timestamp < GPT_6_2_ULTRAFAST_LIST_PRICE_FROM ? 3 : 6;
+}
+
+/** Pi prices Ultrafast at the Standard rate, so recompute the cost from the catalog rates. */
+function withUltrafastPricing(model: Model<Api>, message: AssistantMessage): AssistantMessage {
+  const usage = structuredClone(message.usage);
+  calculateCost(model, usage);
+  const multiplier = ultrafastCostMultiplier(model.id, message.timestamp);
+  usage.cost.input *= multiplier;
+  usage.cost.output *= multiplier;
+  usage.cost.cacheRead *= multiplier;
+  usage.cost.cacheWrite *= multiplier;
+  usage.cost.total =
+    usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
+  return { ...message, usage };
 }
 
 function endWithCanonicalError(
@@ -175,7 +232,8 @@ function endWithCanonicalError(
   stream.end(message);
 }
 
-function streamSimpleOpenAICodexFast(
+function streamSimpleOpenAICodexSpeed(
+  speed: SpeedProvider,
   modelRegistry: ModelRegistry | undefined,
   openAICodexModels: readonly Model<OpenAICodexApi>[],
   model: Model<Api>,
@@ -200,13 +258,13 @@ function streamSimpleOpenAICodexFast(
       endWithCanonicalError(
         outer,
         model.id,
-        `${OPENAI_CODEX_FAST_PROVIDER} session is not initialized.`,
+        `${speed.provider} session is not initialized.`,
         options,
       );
       return;
     }
 
-    const auth = await getOpenAICodexAuth(modelRegistry, codexModel);
+    const auth = await getOpenAICodexAuth(speed.provider, modelRegistry, codexModel);
     if (!auth.ok) {
       endWithCanonicalError(outer, model.id, auth.diagnostic.message, options);
       return;
@@ -222,7 +280,7 @@ function streamSimpleOpenAICodexFast(
     const requestOptions: OpenAICodexResponsesOptions = {
       ...options,
       apiKey: auth.value,
-      serviceTier: "priority",
+      serviceTier: speed.serviceTier,
     };
     if (reasoningEffort) {
       requestOptions.reasoningEffort = reasoningEffort;
@@ -235,10 +293,12 @@ function streamSimpleOpenAICodexFast(
           ...event,
           error: {
             ...event.error,
-            provider: OPENAI_CODEX_FAST_PROVIDER,
+            provider: speed.provider,
             model: model.id,
           },
         });
+      } else if (event.type === "done" && speed.serviceTier === "ultrafast") {
+        outer.push({ ...event, message: withUltrafastPricing(codexModel, event.message) });
       } else {
         outer.push(event);
       }
@@ -259,25 +319,34 @@ function streamSimpleOpenAICodexFast(
 
 export default function (pi: ExtensionAPI) {
   const openAICodexModels = getModels(OPENAI_CODEX_PROVIDER);
-  const openAICodexFastModels = getOpenAICodexFastModels(openAICodexModels);
   const diagnostics: ExtensionDiagnostic[] = [];
-  const baseUrl = getFastProviderBaseUrl(openAICodexFastModels);
+  const registeredProviders = new Set<string>();
   let modelRegistry: ModelRegistry | undefined;
-  let providerRegistered = false;
 
-  if (!baseUrl.ok) {
-    diagnostics.push(baseUrl.diagnostic);
-  } else {
-    pi.registerProvider(OPENAI_CODEX_FAST_PROVIDER, {
-      name: "OpenAI Codex Fast",
+  for (const speed of SPEED_PROVIDERS) {
+    const models = getSpeedModels(speed, openAICodexModels);
+    const baseUrl = getProviderBaseUrl(speed.provider, models);
+    if (!baseUrl.ok) {
+      diagnostics.push(baseUrl.diagnostic);
+      continue;
+    }
+    pi.registerProvider(speed.provider, {
+      name: speed.name,
       baseUrl: baseUrl.value,
       apiKey: PLACEHOLDER_API_KEY,
-      api: OPENAI_CODEX_FAST_API,
-      models: openAICodexFastModels,
+      api: speed.api,
+      models,
       streamSimple: (model, context, options) =>
-        streamSimpleOpenAICodexFast(modelRegistry, openAICodexModels, model, context, options),
+        streamSimpleOpenAICodexSpeed(
+          speed,
+          modelRegistry,
+          openAICodexModels,
+          model,
+          context,
+          options,
+        ),
     });
-    providerRegistered = true;
+    registeredProviders.add(speed.provider);
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -286,31 +355,28 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI) {
         ctx.ui.notify(diagnostic.message, diagnostic.type);
       } else if (diagnostic.type === "error") {
-        console.error(`[${OPENAI_CODEX_FAST_PROVIDER}] ${diagnostic.message}`);
+        console.error(`[${diagnostic.provider}] ${diagnostic.message}`);
       } else {
-        console.warn(`[${OPENAI_CODEX_FAST_PROVIDER}] ${diagnostic.message}`);
+        console.warn(`[${diagnostic.provider}] ${diagnostic.message}`);
       }
-    }
-    if (!providerRegistered) {
-      return;
     }
 
     const latestModelChange = ctx.sessionManager
       .getBranch()
       .findLast((entry): entry is ModelChangeEntry => entry.type === "model_change");
 
-    if (latestModelChange?.provider !== OPENAI_CODEX_FAST_PROVIDER) {
+    if (!latestModelChange || !registeredProviders.has(latestModelChange.provider)) {
       return;
     }
 
-    const { modelId } = latestModelChange;
-    if (ctx.model?.provider === OPENAI_CODEX_FAST_PROVIDER && ctx.model.id === modelId) {
+    const { provider, modelId } = latestModelChange;
+    if (ctx.model?.provider === provider && ctx.model.id === modelId) {
       return;
     }
 
-    const fastModel = ctx.modelRegistry.find(OPENAI_CODEX_FAST_PROVIDER, modelId);
-    if (fastModel) {
-      await pi.setModel(fastModel);
+    const speedModel = ctx.modelRegistry.find(provider, modelId);
+    if (speedModel) {
+      await pi.setModel(speedModel);
     }
   });
 }

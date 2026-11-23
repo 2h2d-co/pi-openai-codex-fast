@@ -1,16 +1,16 @@
 # pi-openai-codex-fast
 
-Pi package that adds an `openai-codex-fast` provider backed by built-in `openai-codex` with `serviceTier: "priority"`.
+Pi package that adds two providers backed by built-in `openai-codex`: `openai-codex-fast` sends `serviceTier: "priority"` (Fast), and `openai-codex-ultrafast` sends `serviceTier: "ultrafast"` (Ultrafast).
 
 Requires Pi `>=1.6.0 <1.7.0`.
 
 **Pi's virtual models are not supported.** Pi's experimental virtual models,
 registered with `pi.registerVirtualModel()`, are not tested with this package.
-Select an `openai-codex-fast` model directly.
+Select an `openai-codex-fast` or `openai-codex-ultrafast` model directly.
 
 ## Behavior
 
-`openai-codex-fast` is a separate selectable provider that delegates to Pi's built-in `openai-codex` implementation with the same model id and `serviceTier: "priority"`. Normal `openai-codex/<modelId>` selections are left on the normal/default-tier path.
+`openai-codex-fast` and `openai-codex-ultrafast` are separate selectable providers. Each delegates to Pi's built-in `openai-codex` implementation with the same model id and its service tier. Normal `openai-codex/<modelId>` selections are left on the normal/default-tier path.
 
 Currently exposed fast models:
 
@@ -25,22 +25,33 @@ Currently exposed fast models:
 - `gpt-5.6-terra`
 - `gpt-5.6-sol`
 
-Runtime behavior when `openai-codex-fast/<modelId>` is selected:
+Currently exposed ultrafast models:
+
+- `gpt-6.2-sol`
+
+Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast for
+GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces also include it for GPT-6.2
+Astra, GPT-6 Astra, and GPT-6.1 Sol, which this package does not expose yet. Plus, Pro $100,
+and Business do not include Ultrafast. When the plan lacks it, Codex accepts the request and
+answers at Standard speed without an error, while Pi still reports the Ultrafast cost.
+
+Runtime behavior when `openai-codex-fast/<modelId>` or `openai-codex-ultrafast/<modelId>` is selected:
 
 - Reuses existing `openai-codex` auth from Pi auth storage.
-- Sends Codex requests through the built-in Codex response API with `serviceTier: "priority"`.
+- Sends Codex requests through the built-in Codex response API with `serviceTier: "priority"` or `serviceTier: "ultrafast"`.
+- Reports costs at the tier's API price. Fast costs 2 times the Standard rate. Ultrafast costs 6 times the Standard rate, and GPT-6.2 models cost 3 times the Standard rate through February 28, 2027, Pacific time. Pi itself prices Ultrafast requests at the Standard rate, so the extension recomputes their cost.
 - Stores generated assistant messages canonically as built-in Codex, including normal replies, tool-calling replies, and setup/error/aborted replies:
   - `provider: "openai-codex"`
   - `api: "openai-codex-responses"`
-- Context-overflow errors are the one exception. They keep `provider: "openai-codex-fast"` with `api: "openai-codex-responses"` because Pi only runs compact-and-retry recovery when the failed message's provider matches the selected model.
-- Does not otherwise rewrite stored assistant history back to `openai-codex-fast`, and never stores `openai-codex-fast-responses`.
+- Context-overflow errors are the one exception. They keep the selected provider, such as `provider: "openai-codex-fast"`, with `api: "openai-codex-responses"` because Pi only runs compact-and-retry recovery when the failed message's provider matches the selected model.
+- Does not otherwise rewrite stored assistant history back to `openai-codex-fast` or `openai-codex-ultrafast`, and never stores `openai-codex-fast-responses` or `openai-codex-ultrafast-responses`.
 - Preserves Pi's transcript-backed system instructions and tool changes by passing the normalized conversation to the built-in Codex adapter.
 
-Fast-mode recovery:
+Provider recovery:
 
-- No custom fast-mode session state is persisted.
+- No custom session state is persisted.
 - On any `session_start` reason (`startup`, `reload`, `new`, `resume`, or `fork`), the extension scans the current branch backward for the latest overall `model_change`.
-- If that latest `model_change` is `openai-codex-fast/<modelId>`, it selects `openai-codex-fast/<modelId>` again.
+- If that latest `model_change` is `openai-codex-fast/<modelId>` or `openai-codex-ultrafast/<modelId>`, it selects that model again.
 - If the latest `model_change` is anything else, it does nothing and lets Pi's normal model recovery handle it.
 - The extension does not handle `session_tree`, so branch switches do not trigger model reconciliation.
 
@@ -64,10 +75,11 @@ After install, log in to built-in Codex if needed:
 /login openai-codex
 ```
 
-Then select a fast model with `/model`, for example:
+Then select a fast or ultrafast model with `/model`, for example:
 
 ```text
 openai-codex-fast/gpt-6.2-sol
+openai-codex-ultrafast/gpt-6.2-sol
 ```
 
 ## Local development
@@ -93,10 +105,13 @@ affected.
 ### Live test
 
 Run `npm run test:live` to test the packed extension through the shipped Pi
-CLI with the existing Codex login. It exercises `gpt-6-luna`, `gpt-6.2-sol`, and
-`gpt-6.2-astra` at medium reasoning effort. Each model must pass priority requests and pricing,
-canonical tool history, prompt reload, session resume, a built-in file read, and
-the normal-tier control.
+CLI with the existing Codex login. It exercises Fast on `gpt-6-luna`, `gpt-6.2-sol`, and
+`gpt-6.2-astra`, and Ultrafast on `gpt-6.2-sol`, at medium reasoning effort. Each case must
+pass its tier's requests and pricing, canonical tool history, prompt reload, session resume,
+a built-in file read, and the normal-tier control. Codex reports `default` as the tier of
+every response, so the Ultrafast case also requires Ultrafast to generate a long tool call at
+least 3 times as fast as Standard. That case needs a Codex login whose plan includes
+Ultrafast for GPT-6.2 Sol.
 Tests use isolated configuration and synthetic prompts. The default test suite
 and CI skip it.
 
