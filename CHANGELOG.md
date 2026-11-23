@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.0.28 - 2026-11-23
+
 ### Added
 
 - Expose `gpt-6.2-astra`, `gpt-6-astra`, and `gpt-6.1-sol` as ultrafast models, alongside `gpt-6.2-sol`. These are the four models OpenAI offers Ultrafast for. Pro $500 and eligible Enterprise and Edu plans include all four, and Pro $200 includes only GPT-6.2 Sol.
