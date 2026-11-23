@@ -24,6 +24,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, AssistantMessage, Credential, Model } from "@earendil-works/pi-ai";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { CODEX_MODEL_CATALOG_CLIENT_VERSION } from "../model-catalog.ts";
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const extensionPath = resolve(rootDir, process.env["TEST_EXTENSION_PATH"] ?? "index.ts");
@@ -134,6 +135,7 @@ interface UsageFixture {
 interface CodexResponseBatch {
   status?: number;
   events?: SseEvent[];
+  headers?: Record<string, string>;
 }
 
 interface CapturedRequest {
@@ -146,7 +148,26 @@ interface CapturedRequest {
 interface CodexTestServer {
   baseUrl: string;
   requests: CapturedRequest[];
+  /** Model catalog requests, which `requests` leaves out. */
+  catalogRequests: CapturedRequest[];
 }
+
+/** The tiers that the fake Codex backend's model catalog lists for each model. */
+type CatalogTiers = Record<string, readonly string[]>;
+
+// A Pro $500 catalog: Fast on every exposed model, and Ultrafast on the four Ultrafast models.
+const FULL_CATALOG: CatalogTiers = {
+  "gpt-6.2-sol": ["priority", "ultrafast"],
+  "gpt-6.2-astra": ["priority", "ultrafast"],
+  "gpt-6.1-sol": ["priority", "ultrafast"],
+  "gpt-6.1-terra": ["priority"],
+  "gpt-6-astra": ["priority", "ultrafast"],
+  "gpt-6-luna": ["priority"],
+  "gpt-6-sol": ["priority"],
+  "gpt-5.6-luna": ["priority"],
+  "gpt-5.6-terra": ["priority"],
+  "gpt-5.6-sol": ["priority"],
+};
 
 interface IntegrationSessionOptions {
   modelId?: string;
@@ -358,11 +379,31 @@ function sse(events: SseEvent[]): string {
 async function startCodexServer(
   t: TestContext,
   responseBatches: CodexResponseBatch[],
+  catalog: CatalogTiers | number = FULL_CATALOG,
 ): Promise<CodexTestServer> {
   const requests: CapturedRequest[] = [];
+  const catalogRequests: CapturedRequest[] = [];
   let requestIndex = 0;
   const server = createServer((req, res) => {
     const request = async () => {
+      if (req.method === "GET" && req.url?.startsWith("/codex/models")) {
+        catalogRequests.push({ method: req.method, url: req.url, headers: req.headers, body: {} });
+        if (typeof catalog === "number") {
+          res.writeHead(catalog);
+          res.end();
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json", etag: '"catalog-1"' });
+        res.end(
+          JSON.stringify({
+            models: Object.entries(catalog).map(([slug, tiers]) => ({
+              slug,
+              service_tiers: tiers.map((id) => ({ id })),
+            })),
+          }),
+        );
+        return;
+      }
       const bodyChunks: Buffer[] = [];
       for await (const rawChunk of req) {
         const chunk: unknown = rawChunk;
@@ -396,6 +437,7 @@ async function startCodexServer(
       res.writeHead(batch.status ?? 200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
+        ...batch.headers,
       });
       res.end(sse(batch.events ?? []));
     };
@@ -420,7 +462,7 @@ async function startCodexServer(
 
   const address = server.address();
   assert.ok(isAddressInfo(address));
-  return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
+  return { baseUrl: `http://127.0.0.1:${address.port}`, requests, catalogRequests };
 }
 
 async function pointBuiltInCodexAt(baseUrl: string, t: TestContext): Promise<void> {
@@ -775,6 +817,113 @@ for (const speed of SPEED_CASES) {
     assertCanonicalAssistantMessages(session);
   });
 }
+
+test("speed providers request the account's model catalog once with the Codex client version", async (t) => {
+  const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }]);
+  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
+
+  await selectFastModel(session);
+  await session.prompt("first", { expandPromptTemplates: false });
+  await session.prompt("second", { expandPromptTemplates: false });
+
+  assert.equal(server.requests.length, 2);
+  assert.equal(server.catalogRequests.length, 1);
+  const request = server.catalogRequests[0];
+  assert.ok(request);
+  assert.equal(request.url, `/codex/models?client_version=${CODEX_MODEL_CATALOG_CLIENT_VERSION}`);
+  assert.equal(request.headers.authorization, `Bearer ${fakeCodexToken()}`);
+  assert.equal(request.headers["chatgpt-account-id"], "acct_test");
+});
+
+test("openai-codex-ultrafast refuses a model whose catalog entry lacks Ultrafast, before any request", async (t) => {
+  // A Pro $200 catalog: Ultrafast only on GPT-6.2 Sol.
+  const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }], {
+    ...FULL_CATALOG,
+    "gpt-6.2-astra": ["priority"],
+  });
+  const { session } = await createIntegrationSession(t, {
+    codexBaseUrl: server.baseUrl,
+    modelId: "gpt-6.2-astra",
+  });
+
+  await selectFastModel(session, "gpt-6.2-astra", ULTRAFAST_PROVIDER);
+  await session.prompt("hello", { expandPromptTemplates: false });
+
+  assert.equal(server.requests.length, 0);
+  const message = assistantMessages(session).at(-1);
+  assert.ok(message);
+  assert.equal(message.stopReason, "error");
+  assert.equal(
+    message.errorMessage,
+    "Your ChatGPT plan does not include Ultrafast for gpt-6.2-astra. Select openai-codex-fast/gpt-6.2-astra instead.",
+  );
+  assert.equal(message.usage.cost.total, 0);
+});
+
+test("without a catalog, Ultrafast is refused with the reason and Fast proceeds", async (t) => {
+  const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }], 503);
+  const { session } = await createIntegrationSession(t, {
+    codexBaseUrl: server.baseUrl,
+    modelId: "gpt-6.2-sol",
+  });
+
+  await selectFastModel(session, "gpt-6.2-sol", ULTRAFAST_PROVIDER);
+  await session.prompt("hello", { expandPromptTemplates: false });
+  assert.equal(server.requests.length, 0);
+  assert.equal(
+    assistantMessages(session).at(-1)?.errorMessage,
+    "The OpenAI Codex model catalog could not be loaded (HTTP 503), so Ultrafast cannot be confirmed for gpt-6.2-sol. Try again, or select openai-codex-fast/gpt-6.2-sol.",
+  );
+
+  // Like the Codex CLI's built-in catalog, Fast needs no fetched catalog.
+  await selectFastModel(session, "gpt-6.2-sol", FAST_PROVIDER);
+  await session.prompt("fast", { expandPromptTemplates: false });
+  assert.equal(server.requests.length, 1);
+  assert.equal(server.requests[0]?.body["service_tier"], "priority");
+});
+
+test("openai-codex-fast refuses a model whose catalog entry lacks Fast", async (t) => {
+  const server = await startCodexServer(t, [{ events: textResponseEvents("ok") }], {
+    [MODEL_ID]: [],
+  });
+  const { session } = await createIntegrationSession(t, { codexBaseUrl: server.baseUrl });
+
+  await selectFastModel(session);
+  await session.prompt("hello", { expandPromptTemplates: false });
+  assert.equal(server.requests.length, 0);
+  assert.equal(
+    assistantMessages(session).at(-1)?.errorMessage,
+    `Your ChatGPT plan does not include Fast for ${MODEL_ID}. Select openai-codex/${MODEL_ID} instead.`,
+  );
+});
+
+test("a new catalog ETag in a response refreshes the catalog", async (t) => {
+  const catalog: CatalogTiers = { ...FULL_CATALOG, "gpt-6.2-astra": ["priority"] };
+  const server = await startCodexServer(
+    t,
+    [{ events: textResponseEvents("ok"), headers: { "x-models-etag": '"catalog-2"' } }],
+    catalog,
+  );
+  const { session } = await createIntegrationSession(t, {
+    codexBaseUrl: server.baseUrl,
+    modelId: "gpt-6.2-astra",
+  });
+
+  await selectFastModel(session, "gpt-6.2-astra", ULTRAFAST_PROVIDER);
+  await session.prompt("refused", { expandPromptTemplates: false });
+  assert.equal(server.requests.length, 0);
+  await selectFastModel(session, "gpt-6.2-astra", FAST_PROVIDER);
+  await session.prompt("fast", { expandPromptTemplates: false });
+  assert.equal(server.requests.length, 1);
+
+  // The plan gained Ultrafast on Astra, and the Fast response reported the catalog's new ETag.
+  catalog["gpt-6.2-astra"] = ["priority", "ultrafast"];
+  await selectFastModel(session, "gpt-6.2-astra", ULTRAFAST_PROVIDER);
+  await session.prompt("ultrafast", { expandPromptTemplates: false });
+  assert.equal(server.catalogRequests.length, 2);
+  assert.equal(server.requests.length, 2);
+  assert.equal(server.requests[1]?.body["service_tier"], "ultrafast");
+});
 
 for (const modelId of ["gpt-5.6-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.2-sol"]) {
   test(`${modelId} preserves transcript prompts and tool changes through the built-in Codex adapter`, async (t) => {

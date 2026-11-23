@@ -32,11 +32,27 @@ Currently exposed ultrafast models, the four models OpenAI offers Ultrafast for:
 - `gpt-6-astra`
 - `gpt-6.1-sol`
 
-Ultrafast needs a ChatGPT plan that includes it for the model. Pro $200 includes Ultrafast only
-for GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces include it for all four
-models. Plus, Pro $100, and Business do not include Ultrafast. When the plan lacks it, Codex
-accepts the request and answers at Standard speed without an error, while Pi still reports the
-Ultrafast cost. With Pro $200, use `openai-codex-fast` for the other three models.
+The ChatGPT plan decides which models get each speed. Pro $200 includes Ultrafast only for
+GPT-6.2 Sol. Pro $500 and eligible Enterprise and Edu workspaces include it for all four models.
+Plus, Pro $100, and Business do not include Ultrafast. Codex accepts a tier the plan lacks and
+silently answers at Standard speed, so both providers check the account's model catalog first,
+as the Codex CLI does. The catalog is the Codex backend's `/codex/models` list, and it names the
+tiers the signed-in account has on each model.
+
+- When the catalog does not list the provider's tier for the model, the provider refuses the
+  request before sending it, with an error that names the provider to select instead. With Pro
+  $200, for example, `openai-codex-ultrafast/gpt-6.2-astra` points to
+  `openai-codex-fast/gpt-6.2-astra`.
+- When the catalog cannot be loaded and none was kept, `openai-codex-fast` proceeds, as the Codex
+  CLI's built-in catalog allows, and `openai-codex-ultrafast` refuses with the reason. A failed
+  load is retried after 30 seconds.
+- The extension loads the catalog before the account's first request. After five minutes it
+  reloads the catalog in the background, and the previous catalog answers requests until the new
+  one arrives. When a response reports that the catalog changed, through the `x-models-etag`
+  header, the next request waits for the new catalog.
+- The extension keeps each account's latest catalog in
+  `pi-openai-codex-fast-model-catalog.json` in the Pi agent directory, keyed by a hash of the
+  account id.
 
 Runtime behavior when `openai-codex-fast/<modelId>` or `openai-codex-ultrafast/<modelId>` is selected:
 
@@ -110,12 +126,13 @@ affected.
 Run `npm run test:live` to test the packed extension through the shipped Pi
 CLI with the existing Codex login. It exercises Fast on `gpt-6-luna`, `gpt-6.2-sol`, and
 `gpt-6.2-astra`, and Ultrafast on `gpt-6.2-sol` and `gpt-6.2-astra`, at medium reasoning
-effort. Each case must pass its tier's requests and pricing, canonical tool history, prompt
+effort. Each case first loads the account's model catalog. When the catalog lists the case's tier
+for the model, the case must pass its tier's requests and pricing, canonical tool history, prompt
 reload, session resume, a built-in file read, and the normal-tier control. Codex reports
-`default` as the tier of every response, so the `gpt-6.2-sol` Ultrafast case also requires
-Ultrafast to generate a long tool call at least 3 times as fast as Standard. That case needs a
-Codex login whose plan includes Ultrafast for GPT-6.2 Sol. The `gpt-6.2-astra` Ultrafast case
-does not check speed, because Pro $200 serves its Ultrafast requests at Standard speed.
+`default` as the tier of every response, so an Ultrafast case also requires Ultrafast to generate
+a long tool call at least 3 times as fast as Standard. When the catalog does not list the tier,
+the provider must refuse the prompt before sending a request. The live test needs a Codex login
+whose plan includes Ultrafast for GPT-6.2 Sol.
 Tests use isolated configuration and synthetic prompts. The default test suite
 and CI skip it.
 

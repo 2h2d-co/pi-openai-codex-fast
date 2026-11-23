@@ -4,7 +4,11 @@
 
 ### Added
 
-- Expose `gpt-6.2-astra`, `gpt-6-astra`, and `gpt-6.1-sol` as ultrafast models, alongside `gpt-6.2-sol`. These are the four models OpenAI offers Ultrafast for. Pro $500 and eligible Enterprise and Edu plans include all four. Pro $200 includes only GPT-6.2 Sol and serves Ultrafast requests to the other three at Standard speed while Pi reports the Ultrafast cost.
+- Expose `gpt-6.2-astra`, `gpt-6-astra`, and `gpt-6.1-sol` as ultrafast models, alongside `gpt-6.2-sol`. These are the four models OpenAI offers Ultrafast for. Pro $500 and eligible Enterprise and Edu plans include all four, and Pro $200 includes only GPT-6.2 Sol.
+
+### Changed
+
+- Check the account's Codex model catalog before each request, as the Codex CLI does. `openai-codex-ultrafast` and `openai-codex-fast` refuse a model whose catalog entry does not list their tier, before sending anything, and name the provider to select instead. Codex silently served such requests at Standard speed while Pi reported the faster tier's cost. Without a loaded catalog, Fast proceeds and Ultrafast is refused. The extension keeps each account's catalog in `pi-openai-codex-fast-model-catalog.json` in the Pi agent directory.
 
 ## 0.0.27 - 2026-11-23
 

@@ -18,6 +18,13 @@ import {
   type SimpleStreamOptions,
   type TranscriptContext,
 } from "@earendil-works/pi-ai/compat";
+import {
+  CodexModelCatalog,
+  extractAccountId,
+  modelsEtagFromEvent,
+  modelsEtagFromHeaders,
+  speedRefusal,
+} from "./model-catalog.ts";
 
 const OPENAI_CODEX_API = "openai-codex-responses";
 const OPENAI_CODEX_PROVIDER = "openai-codex";
@@ -56,10 +63,8 @@ const SPEED_PROVIDERS: readonly SpeedProvider[] = [
     name: "OpenAI Codex Ultrafast",
     api: "openai-codex-ultrafast-responses",
     serviceTier: "ultrafast",
-    // The models for which OpenAI offers Ultrafast in Codex. The plan decides which of them an
-    // account gets: Pro $200 includes only GPT-6.2 Sol, and Pro $500 includes all four. Codex
-    // accepts the tier for any model and silently serves Standard speed when the plan does not
-    // include the model.
+    // The models for which OpenAI offers Ultrafast in Codex. The account's model catalog decides
+    // which of them the plan includes: Pro $200 includes only GPT-6.2 Sol, and Pro $500 all four.
     modelIds: new Set(["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6-astra", "gpt-6.1-sol"]),
   },
 ];
@@ -236,6 +241,7 @@ function endWithCanonicalError(
 
 function streamSimpleOpenAICodexSpeed(
   speed: SpeedProvider,
+  catalog: CodexModelCatalog,
   modelRegistry: ModelRegistry | undefined,
   openAICodexModels: readonly Model<OpenAICodexApi>[],
   model: Model<Api>,
@@ -272,6 +278,23 @@ function streamSimpleOpenAICodexSpeed(
       return;
     }
 
+    // The account's model catalog lists the tiers its plan includes for each model.
+    const accountId = extractAccountId(auth.value);
+    await catalog.load(
+      { accountId, apiKey: auth.value, baseUrl: codexModel.baseUrl },
+      options?.signal,
+    );
+    const refusal = speedRefusal(
+      speed.serviceTier,
+      model.id,
+      catalog.serviceTiers(accountId, model.id),
+      catalog.failure(accountId),
+    );
+    if (refusal) {
+      endWithCanonicalError(outer, model.id, refusal, options);
+      return;
+    }
+
     const clampedReasoning = options?.reasoning
       ? clampThinkingLevel(codexModel, options.reasoning)
       : "off";
@@ -283,6 +306,17 @@ function streamSimpleOpenAICodexSpeed(
       ...options,
       apiKey: auth.value,
       serviceTier: speed.serviceTier,
+      // Responses report the catalog's ETag, and a new one means the catalog changed.
+      async onResponse(response, responseModel) {
+        const etag = modelsEtagFromHeaders(response.headers);
+        if (etag) catalog.noteModelsEtag(accountId, etag);
+        await options?.onResponse?.(response, responseModel);
+      },
+      async onProviderStreamEvent(event, eventModel) {
+        const etag = modelsEtagFromEvent(event);
+        if (etag) catalog.noteModelsEtag(accountId, etag);
+        await options?.onProviderStreamEvent?.(event, eventModel);
+      },
     };
     if (reasoningEffort) {
       requestOptions.reasoningEffort = reasoningEffort;
@@ -323,6 +357,7 @@ export default function (pi: ExtensionAPI) {
   const openAICodexModels = getModels(OPENAI_CODEX_PROVIDER);
   const diagnostics: ExtensionDiagnostic[] = [];
   const registeredProviders = new Set<string>();
+  const catalog = new CodexModelCatalog();
   let modelRegistry: ModelRegistry | undefined;
 
   for (const speed of SPEED_PROVIDERS) {
@@ -341,6 +376,7 @@ export default function (pi: ExtensionAPI) {
       streamSimple: (model, context, options) =>
         streamSimpleOpenAICodexSpeed(
           speed,
+          catalog,
           modelRegistry,
           openAICodexModels,
           model,

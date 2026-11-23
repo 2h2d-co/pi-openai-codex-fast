@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { RpcClient } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/rpc/rpc-client.js";
 import manifest from "../package.json" with { type: "json" };
+import { CodexModelCatalog, extractAccountId } from "../model-catalog.ts";
 import { describeFailure, errorLog } from "./support/error-log.ts";
 import { archiveEntries, packageArchive } from "./support/package-archive.ts";
 
@@ -38,7 +39,7 @@ const liveCases = [
 
 for (const { provider, serviceTier, modelId } of liveCases) {
   test(
-    `packaged ${provider}/${modelId} preserves ${serviceTier}, canonical history, and reload through live Pi ${piVersion}`,
+    `packaged ${provider}/${modelId} sends ${serviceTier} where the account's catalog lists it, with canonical history and reload, through live Pi ${piVersion}`,
     {
       skip: process.env["PI_FAST_LIVE_TEST"] !== "1",
       timeout: 240_000,
@@ -46,6 +47,18 @@ for (const { provider, serviceTier, modelId } of liveCases) {
     async (t) => {
       const token = process.env["PI_FAST_LIVE_API_KEY"];
       assert.ok(token, "PI_FAST_LIVE_API_KEY is required");
+      // The account's model catalog decides whether the provider may send its tier to the model.
+      const accountId = extractAccountId(token);
+      const catalog = new CodexModelCatalog({ file: () => undefined });
+      await catalog.load({ accountId, apiKey: token, baseUrl: undefined });
+      assert.equal(catalog.failure(accountId), undefined);
+      const catalogTiers = catalog.serviceTiers(accountId, modelId);
+      assert.ok(catalogTiers, `The Codex model catalog does not list ${modelId}.`);
+      t.diagnostic(`${modelId} catalog tiers: ${[...catalogTiers].join(", ")}`);
+      const listed = catalogTiers.has(serviceTier);
+      if (modelId === "gpt-6.2-sol") {
+        assert.ok(listed, `The live tests need a plan with ${serviceTier} on GPT-6.2 Sol.`);
+      }
       const temporary = await mkdtemp(join(tmpdir(), "fast-cli-live-"));
       t.after(() => rm(temporary, { recursive: true, force: true }));
       // A supplied candidate is the release gate's exact archive; it never falls back to packing.
@@ -121,6 +134,30 @@ for (const { provider, serviceTier, modelId } of liveCases) {
       t.after(async () => client.stop());
       client.onEvent(errors.rpcEvent);
       await client.start();
+      if (!listed) {
+        // The provider refuses a tier the plan lacks before any request, so nothing is billed.
+        await client.promptAndWait("user value: refused", undefined, 90_000);
+        const refused = (await client.getMessages()).at(-1);
+        assert.ok(refused?.role === "assistant");
+        assert.equal(refused.stopReason, "error");
+        assert.equal(
+          refused.errorMessage,
+          serviceTier === "ultrafast"
+            ? `Your ChatGPT plan does not include Ultrafast for ${modelId}. Select openai-codex-fast/${modelId} instead.`
+            : `Your ChatGPT plan does not include Fast for ${modelId}. Select openai-codex/${modelId} instead.`,
+        );
+        assert.equal(refused.usage.cost.total, 0);
+        assert.ok(
+          !(await client.getEntries()).entries.some(
+            (entry) => entry.type === "custom" && entry.customType === "release-test-tier",
+          ),
+          "The refused prompt sent no provider request.",
+        );
+        t.diagnostic(
+          `Pi ${piVersion} ${provider}/${modelId}: packed extension refused ${serviceTier}, which the plan lacks`,
+        );
+        return;
+      }
       async function turn(
         marker: string,
         value: string,
@@ -241,9 +278,7 @@ for (const { provider, serviceTier, modelId } of liveCases) {
       assert.equal(readResult.isError, false);
       await client.setModel("openai-codex", modelId);
       await turn("SECOND", "delta", false);
-      // Every plan with Ultrafast includes GPT-6.2 Sol, so only Sol checks that Ultrafast generates
-      // faster. Pro $200 serves GPT-6.2 Astra's Ultrafast requests at Standard speed.
-      if (serviceTier === "ultrafast" && modelId === "gpt-6.2-sol") {
+      if (serviceTier === "ultrafast") {
         // Codex echoes `default` for every tier and silently serves Standard speed when the plan
         // lacks Ultrafast, so only the generation speed shows that Ultrafast served the request.
         const standard = await generationSpeed();

@@ -21,6 +21,7 @@
   },
   "files": [
     "index.ts",
+    "model-catalog.ts",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

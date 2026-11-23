@@ -2,4 +2,5 @@ CHANGELOG.md
 LICENSE
 README.md
 index.ts
+model-catalog.ts
 package.json
