@@ -759,27 +759,16 @@ for (const speed of SPEED_CASES) {
     assert.equal(request.body["service_tier"], serviceTier);
     assert.notEqual(leadingPrompt(request.body), "You are a helpful assistant.");
     // Thinking starts off, which Pi's Codex adapter sends as effort `none`. Models without an off
-    // level, such as GPT-6.1 Sol, clamp to `minimal`, which it sends as low effort. Models with
-    // mid-conversation effort keep `reasoning.effort` fixed and carry the effort in a trailing
-    // `configuration_update` item, so a thinking change keeps the prompt cache.
+    // level, such as GPT-6.1 Sol, clamp to `minimal`, which it sends as low effort. The first
+    // request sends that effort as `reasoning.effort`. Models with mid-conversation effort add a
+    // `configuration_update` item only when a later turn changes it.
     const codexModel = session.modelRuntime.getModel(CODEX_PROVIDER, modelId);
     assert.ok(codexModel);
     const effort = codexModel.thinkingLevelMap?.off === null ? "low" : "none";
     const input = request.body["input"];
     assert.ok(Array.isArray(input));
-    if (
-      codexModel.compat !== undefined &&
-      "supportsMidConvoEffort" in codexModel.compat &&
-      codexModel.compat.supportsMidConvoEffort === true
-    ) {
-      assert.deepEqual(request.body["reasoning"], { effort: "medium", summary: "auto" });
-      assert.deepEqual(input.at(-1), { type: "configuration_update", reasoning: { effort } });
-    } else {
-      assert.deepEqual(request.body["reasoning"], { effort, summary: "auto" });
-      assert.ok(
-        !input.some((item) => isJsonObject(item) && item["type"] === "configuration_update"),
-      );
-    }
+    assert.deepEqual(request.body["reasoning"], { effort, summary: "auto" });
+    assert.ok(!input.some((item) => isJsonObject(item) && item["type"] === "configuration_update"));
 
     const messages = assistantMessages(session);
     assert.equal(messages.length, 1);

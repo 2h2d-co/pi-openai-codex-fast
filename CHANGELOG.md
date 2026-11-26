@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- Require Pi `>=1.6.1 <1.7.0`. Pi 1.6.1 sends the selected thinking level as `reasoning.effort` on the GPT-6, GPT-6.1, and GPT-6.2 models. Pi 1.6.0 sent `medium` and carried the level only in a `configuration_update` item, which Codex applies only partly above medium, so high and xhigh reasoned less.
+
 ## 0.0.28 - 2026-11-23
 
 ### Added
