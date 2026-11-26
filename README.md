@@ -124,15 +124,14 @@ affected.
 ### Live test
 
 Run `npm run test:live` to test the packed extension through the shipped Pi
-CLI with the existing Codex login. It exercises Fast on `gpt-6-luna`, `gpt-6.2-sol`, and
-`gpt-6.2-astra`, and Ultrafast on `gpt-6.2-sol` and `gpt-6.2-astra`, at medium reasoning
-effort. Each case first loads the account's model catalog. When the catalog lists the case's tier
-for the model, the case must pass its tier's requests and pricing, canonical tool history, prompt
-reload, session resume, a built-in file read, and the normal-tier control. Codex reports
-`default` as the tier of every response, so an Ultrafast case also requires Ultrafast to generate
-a long tool call at least 3 times as fast as Standard. When the catalog does not list the tier,
-the provider must refuse the prompt before sending a request. The live test needs a Codex login
-whose plan includes Ultrafast for GPT-6.2 Sol.
+CLI with the existing Codex login. It exercises Fast and Ultrafast on `gpt-6.2-sol` and
+`gpt-6.2-astra` at medium reasoning effort. Each case first loads the account's model catalog.
+When the catalog lists the case's tier for the model, the case must pass its tier's requests and
+pricing, canonical tool history, prompt reload, session resume, a built-in file read, and the
+normal-tier control. Codex reports `default` as the tier of every response, so an Ultrafast case
+also requires Ultrafast to generate a long tool call at least 3 times as fast as Standard. When
+the catalog does not list the tier, the provider must refuse the prompt before sending a request.
+The live test needs a Codex login whose plan includes Ultrafast for GPT-6.2 Sol.
 Tests use isolated configuration and synthetic prompts. The default test suite
 and CI skip it.
 

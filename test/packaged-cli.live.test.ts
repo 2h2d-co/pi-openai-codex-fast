@@ -25,7 +25,7 @@ const instructions = (marker: string) =>
 // and at 6 times Standard from March 1, 2027.
 const GPT_6_2_ULTRAFAST_LIST_PRICE_FROM = Date.parse("2027-03-01T08:00:00Z");
 const liveCases = [
-  ...["gpt-6-luna", "gpt-6.2-sol", "gpt-6.2-astra"].map((modelId) => ({
+  ...["gpt-6.2-sol", "gpt-6.2-astra"].map((modelId) => ({
     provider: "openai-codex-fast",
     serviceTier: "priority",
     modelId,
